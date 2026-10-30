@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=HB ExpertMouse
+Comment=Remap the Kensington Expert Mouse buttons
+Exec=hb_expertmouse
+Icon=hb_expertmouse
+Categories=Settings;HardwareSettings;
+Terminal=false

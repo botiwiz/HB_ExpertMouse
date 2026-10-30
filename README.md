@@ -42,3 +42,35 @@ To start the app with Windows, put a shortcut to `HB_ExpertMouse.exe /hidden` in
 
 - Suppose you move one device and then click a button on the *other* device without moving it at all. The first click may be credited to the device you moved. Moving the ball or mouse even slightly first avoids this. Making this exact would need a kernel driver.
 - Elevated (admin) windows don't receive remapped clicks unless the app is also run as administrator. This is Windows UIPI behavior.
+
+---
+
+# Linux (AppImage)
+
+On Linux, remapping is exact per device rather than guessed:
+- The app takes exclusive control of **only** the Expert Mouse's input device (an evdev grab) and re-sends its input through a virtual device, with your remaps applied.
+- Other mice are never opened.
+- It works on both X11 and Wayland.
+
+## Get it
+
+- Download the `HB_ExpertMouse-AppImage` artifact from the repo's GitHub Actions "build" run.
+- Or build it yourself with `linux/build-appimage.sh`. This needs `gcc`, `pkg-config` and `libgtk-3-dev`.
+
+## Use
+
+1. Make it executable and run it: `chmod +x HB_ExpertMouse-x86_64.AppImage`, then `./HB_ExpertMouse-x86_64.AppImage`.
+2. The first time, the window may say it has no permission. Click **Grant access** and enter your password once. This installs a small udev rule that lets the logged-in user access Kensington devices and `/dev/uinput`. The app never runs as root.
+3. Choose your Expert Mouse in the device list. The default, `047D`, matches any Kensington device.
+4. Set an action for each button. Changes apply instantly.
+
+More details:
+- Settings are saved in `HB_ExpertMouse.ini` next to the AppImage.
+- Closing the window leaves the background remapper running. Use **Stop remapper and quit** to stop it.
+- **Start remapper when I log in** adds an autostart entry.
+- Turning off **Remapping enabled** releases the trackball, so it works natively again.
+
+## Dependencies
+
+- The remapper itself needs only the standard C library.
+- The settings window uses the system's GTK3, which is present on practically every desktop. GTK isn't bundled, which keeps the AppImage small.
