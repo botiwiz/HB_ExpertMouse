@@ -33,16 +33,12 @@ To start the app with Windows, put a shortcut to `HB_ExpertMouse.exe /hidden` in
 ## How it works
 
 - A low-level mouse hook can block or replace clicks, but it can't tell which mouse sent them.
-- Raw Input knows which device sent a click, but it can't block it.
-- The app matches the two streams for each button event:
-  - Clicks from the Expert Mouse are replaced with the chosen action.
-  - Clicks from other devices pass through.
-- Only buttons that you've remapped are inspected. Every other button, and all pointer movement, passes through untouched.
-- If Windows delivers the hook event before the Raw Input event, the click is held for a moment:
-  - A click from another mouse is re-sent unchanged within a few milliseconds.
-  - If no device info arrives within 150 ms, the click is passed on unchanged, so nothing can get stuck.
+- Raw Input knows which device sent input, but Windows delivers it only after the hook has run, and not at all for clicks the hook blocked.
+- So each click is credited to the device that most recently sent any input (moved, scrolled or clicked). In practice, that's the device your hand is on.
+- Only buttons that you've remapped are affected. Every other button, and all pointer movement, passes through untouched.
+- A button release always follows whatever was done for its press, so buttons can't get stuck.
 
 ## Limitations
 
-- If you remap a button that your normal mouse also has (e.g. Left), clicks from that mouse may be re-sent by the app. Re-sent clicks are flagged as synthetic input, and some games with anti-cheat ignore synthetic input. Remapping Middle/Back/Forward avoids this in practice.
+- Suppose you move one device and then click a button on the *other* device without moving it at all. The first click may be credited to the device you moved. Moving the ball or mouse even slightly first avoids this. Making this exact would need a kernel driver.
 - Elevated (admin) windows don't receive remapped clicks unless the app is also run as administrator. This is Windows UIPI behavior.

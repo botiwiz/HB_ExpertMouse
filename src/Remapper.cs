@@ -6,36 +6,23 @@ namespace HBExpertMouse
 {
     // Remaps button presses that come from ONE physical device (the Expert Mouse) only.
     //
-    // A low-level hook can block clicks but can't tell which mouse sent them; Raw Input knows
-    // the device but can't block. So both streams are matched up per button event:
-    //  - Raw input arrives first  -> the hook decides instantly (no delay).
-    //  - Hook event arrives first -> it is held briefly; when its raw input arrives it is either
-    //    remapped (Expert Mouse) or re-sent unchanged (any other mouse). If no raw input shows up
-    //    within HoldTimeoutMs it is re-sent unchanged, so other mice can never get stuck.
+    // A low-level hook can block clicks but can't tell which mouse sent them; Raw Input knows the
+    // device but arrives only after the hook has run, and never arrives for clicks the hook blocked.
+    // So each click is credited to the device that most recently sent input (moved, scrolled or
+    // clicked) - in practice the one your hand is on. The matching button-up always follows the
+    // decision made for its button-down, so buttons can't get stuck.
     // Only buttons that actually have a remap are ever touched; everything else passes straight through.
     public sealed class Remapper : NativeWindow, IDisposable
     {
-        const int HoldTimeoutMs = 150;
-        const int RawStaleMs = 500;
-
-        struct Pending
-        {
-            public MouseButton Button;
-            public bool Down;
-            public bool FromTarget; // raw entries only
-            public int Tick;
-        }
-
         readonly Native.LowLevelMouseProc hookProc;
         IntPtr hook;
-        readonly List<Pending> heldHook = new List<Pending>();
-        readonly List<Pending> earlyRaw = new List<Pending>();
         readonly Dictionary<IntPtr, bool> isTargetCache = new Dictionary<IntPtr, bool>();
         readonly ButtonAction[] activeAction = new ButtonAction[5];
-        readonly Timer timer;
+        IntPtr lastDevice;
+        bool lastIsTarget;
         Config config;
 
-        // Fired for every button press from any physical mouse: (device path, button, is target).
+        // Fired for button presses: (device path, button, is target).
         public event Action<string, MouseButton, bool> RawButtonPressed;
 
         public Remapper(Config cfg)
@@ -52,32 +39,22 @@ namespace HBExpertMouse
             hookProc = HookProc;
             hook = Native.SetWindowsHookEx(Native.WH_MOUSE_LL, hookProc, Native.GetModuleHandle(null), 0);
             if (hook == IntPtr.Zero) throw new InvalidOperationException("SetWindowsHookEx failed");
-
-            timer = new Timer { Interval = 25 };
-            timer.Tick += delegate { FlushExpired(); };
         }
 
         // Apply new settings on the fly.
         public void SetConfig(Config cfg)
         {
             ReleaseActive();
-            FlushAll();
             config = cfg;
             isTargetCache.Clear();
+            lastIsTarget = lastDevice != IntPtr.Zero && IsTarget(lastDevice);
         }
 
         public void Dispose()
         {
             if (hook != IntPtr.Zero) { Native.UnhookWindowsHookEx(hook); hook = IntPtr.Zero; }
             ReleaseActive();
-            FlushAll();
-            timer.Dispose();
             DestroyHandle();
-        }
-
-        bool IsRemapped(MouseButton b)
-        {
-            return (config.Enabled && config.Actions[(int)b].Kind != ActionKind.Default) || activeAction[(int)b] != null;
         }
 
         // ---------------- low-level hook ----------------
@@ -90,28 +67,31 @@ namespace HBExpertMouse
                 var info = (Native.MSLLHOOKSTRUCT)System.Runtime.InteropServices.Marshal.PtrToStructure(lParam, typeof(Native.MSLLHOOKSTRUCT));
                 if ((info.flags & Native.LLMHF_INJECTED) == 0          // never touch synthetic input (ours or others')
                     && TryDecodeHook((int)wParam, info.mouseData, out button, out down)
-                    && IsRemapped(button))
-                {
-                    if (HandleHookEvent(button, down)) return (IntPtr)1;
-                }
+                    && HandleButton(button, down))
+                    return (IntPtr)1;
             }
             return Native.CallNextHookEx(hook, nCode, wParam, lParam);
         }
 
-        // Returns true if the event must be blocked.
-        bool HandleHookEvent(MouseButton button, bool down)
+        // Returns true if the event was remapped and must be blocked.
+        bool HandleButton(MouseButton button, bool down)
         {
-            int i = earlyRaw.FindIndex(p => p.Button == button && p.Down == down);
-            if (i >= 0)
+            if (!down)
             {
-                bool target = earlyRaw[i].FromTarget;
-                earlyRaw.RemoveAt(i);
-                if (!target) return false;
-                Perform(button, down);
+                ButtonAction a = activeAction[(int)button];
+                if (a == null) return false;     // its down wasn't remapped: pass the up through
+                activeAction[(int)button] = null;
+                Execute(a, false);
                 return true;
             }
-            heldHook.Add(new Pending { Button = button, Down = down, Tick = Environment.TickCount });
-            timer.Enabled = true;
+            if (!config.Enabled || !lastIsTarget) return false;
+            ButtonAction action = config.Actions[(int)button];
+            if (action.Kind == ActionKind.Default) return false;
+
+            if (activeAction[(int)button] != null) Execute(activeAction[(int)button], false);
+            activeAction[(int)button] = action;
+            Execute(action, true);
+            if (RawButtonPressed != null) RawButtonPressed(Native.GetDeviceName(lastDevice), button, true);
             return true;
         }
 
@@ -145,12 +125,9 @@ namespace HBExpertMouse
             base.WndProc(ref m);
         }
 
-        static readonly int[,] RawFlags = {
-            { Native.RI_MOUSE_LEFT_DOWN, Native.RI_MOUSE_LEFT_UP },
-            { Native.RI_MOUSE_RIGHT_DOWN, Native.RI_MOUSE_RIGHT_UP },
-            { Native.RI_MOUSE_MIDDLE_DOWN, Native.RI_MOUSE_MIDDLE_UP },
-            { Native.RI_MOUSE_X1_DOWN, Native.RI_MOUSE_X1_UP },
-            { Native.RI_MOUSE_X2_DOWN, Native.RI_MOUSE_X2_UP } };
+        static readonly int[] RawDownFlags = {
+            Native.RI_MOUSE_LEFT_DOWN, Native.RI_MOUSE_RIGHT_DOWN, Native.RI_MOUSE_MIDDLE_DOWN,
+            Native.RI_MOUSE_X1_DOWN, Native.RI_MOUSE_X2_DOWN };
 
         void OnRawInput(IntPtr hRawInput)
         {
@@ -164,35 +141,21 @@ namespace HBExpertMouse
                 if (System.Runtime.InteropServices.Marshal.ReadInt32(buf, 0) != Native.RIM_TYPEMOUSE) return;
                 IntPtr device = System.Runtime.InteropServices.Marshal.ReadIntPtr(buf, 8);
                 if (device == IntPtr.Zero) return;                  // injected input (e.g. our own SendInput)
-                int flags = System.Runtime.InteropServices.Marshal.ReadInt16(buf, (int)hdr + 4) & 0xFFFF;
-                if (flags == 0) return;                             // movement / wheel only
 
-                bool target = IsTarget(device);
-                for (int b = 0; b < 5; b++)
+                // Any input (movement, wheel, buttons) marks this device as the one in use.
+                if (device != lastDevice)
                 {
-                    // A single report can carry several transitions; handle downs before ups.
-                    if ((flags & RawFlags[b, 0]) != 0) OnRawButton((MouseButton)b, true, target, device);
-                    if ((flags & RawFlags[b, 1]) != 0) OnRawButton((MouseButton)b, false, target, device);
+                    lastDevice = device;
+                    lastIsTarget = IsTarget(device);
                 }
+
+                int flags = System.Runtime.InteropServices.Marshal.ReadInt16(buf, (int)hdr + 4) & 0xFFFF;
+                if (RawButtonPressed == null) return;
+                for (int b = 0; b < 5; b++)
+                    if ((flags & RawDownFlags[b]) != 0)
+                        RawButtonPressed(Native.GetDeviceName(device), (MouseButton)b, lastIsTarget);
             }
             finally { System.Runtime.InteropServices.Marshal.FreeHGlobal(buf); }
-        }
-
-        void OnRawButton(MouseButton button, bool down, bool target, IntPtr device)
-        {
-            if (down && RawButtonPressed != null) RawButtonPressed(Native.GetDeviceName(device), button, target);
-            if (!IsRemapped(button)) return;
-
-            int i = heldHook.FindIndex(p => p.Button == button && p.Down == down);
-            if (i >= 0)
-            {
-                heldHook.RemoveAt(i);
-                if (target) Perform(button, down);
-                else Replay(button, down);
-                return;
-            }
-            earlyRaw.Add(new Pending { Button = button, Down = down, FromTarget = target, Tick = Environment.TickCount });
-            timer.Enabled = true;
         }
 
         bool IsTarget(IntPtr device)
@@ -203,29 +166,6 @@ namespace HBExpertMouse
             t = match.Length > 0 && Native.GetDeviceName(device).IndexOf(match, StringComparison.OrdinalIgnoreCase) >= 0;
             isTargetCache[device] = t;
             return t;
-        }
-
-        // ---------------- housekeeping ----------------
-
-        void FlushExpired()
-        {
-            int now = Environment.TickCount;
-            while (heldHook.Count > 0 && now - heldHook[0].Tick >= HoldTimeoutMs)
-            {
-                Pending p = heldHook[0];
-                heldHook.RemoveAt(0);
-                Replay(p.Button, p.Down);   // fail open: behave as if no remapper were running
-            }
-            earlyRaw.RemoveAll(p => now - p.Tick >= RawStaleMs);
-            if (heldHook.Count == 0 && earlyRaw.Count == 0) timer.Enabled = false;
-        }
-
-        void FlushAll()
-        {
-            foreach (Pending p in heldHook) Replay(p.Button, p.Down);
-            heldHook.Clear();
-            earlyRaw.Clear();
-            timer.Enabled = false;
         }
 
         void ReleaseActive()
@@ -239,25 +179,6 @@ namespace HBExpertMouse
         }
 
         // ---------------- output ----------------
-
-        void Perform(MouseButton button, bool down)
-        {
-            if (down)
-            {
-                ButtonAction a = config.Enabled ? config.Actions[(int)button] : new ButtonAction(ActionKind.Default);
-                if (a.Kind == ActionKind.Default) { Replay(button, true); a = new ButtonAction(ActionKind.Default); }
-                else Execute(a, true);
-                activeAction[(int)button] = a;
-            }
-            else
-            {
-                ButtonAction a = activeAction[(int)button];
-                activeAction[(int)button] = null;
-                if (a == null) return;  // up without a tracked down: swallow
-                if (a.Kind == ActionKind.Default) Replay(button, false);
-                else Execute(a, false);
-            }
-        }
 
         static void Replay(MouseButton b, bool down)
         {
