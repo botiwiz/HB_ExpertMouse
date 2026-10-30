@@ -12,6 +12,10 @@ namespace HBExpertMouse
     // clicked) - in practice the one your hand is on. The matching button-up always follows the
     // decision made for its button-down, so buttons can't get stuck.
     // Only buttons that actually have a remap are ever touched; everything else passes straight through.
+    //
+    // Runs on its own high-priority thread: Windows silently removes a low-level hook that is ever
+    // slow to answer, so it must never wait on the UI. As a safety net the hook is reinstalled if raw
+    // input shows clicks the hook never saw.
     public sealed class Remapper : NativeWindow, IDisposable
     {
         readonly Native.LowLevelMouseProc hookProc;
@@ -20,15 +24,40 @@ namespace HBExpertMouse
         readonly ButtonAction[] activeAction = new ButtonAction[5];
         IntPtr lastDevice;
         bool lastIsTarget;
-        Config config;
+        volatile Config config;
+        volatile Config pendingConfig;
+        volatile int lastHookTick;
+        const int WM_APPLY_CONFIG = Native.WM_APP + 1, WM_SHUTDOWN = Native.WM_APP + 2;
 
         // Fired for button presses: (device path, button, is target).
         public event Action<string, MouseButton, bool> RawButtonPressed;
         // Diagnostic lines; only raised while LogEnabled is set (settings window open).
         public event Action<string> Log;
-        public bool LogEnabled;
+        public volatile bool LogEnabled;
 
-        public Remapper(Config cfg)
+        // Creates the remapper on its own thread with its own message loop.
+        public static Remapper Start(Config cfg)
+        {
+            Remapper r = null;
+            Exception error = null;
+            var ready = new System.Threading.ManualResetEvent(false);
+            var t = new System.Threading.Thread(delegate ()
+            {
+                try { r = new Remapper(cfg); }
+                catch (Exception e) { error = e; }
+                ready.Set();
+                if (r != null) Application.Run();
+            });
+            t.IsBackground = true;
+            t.Priority = System.Threading.ThreadPriority.Highest;
+            t.SetApartmentState(System.Threading.ApartmentState.STA);
+            t.Start();
+            ready.WaitOne();
+            if (error != null) throw error;
+            return r;
+        }
+
+        Remapper(Config cfg)
         {
             config = cfg;
             CreateHandle(new CreateParams { Caption = "HB_ExpertMouse_RawInput" });
@@ -40,15 +69,34 @@ namespace HBExpertMouse
                 throw new InvalidOperationException("RegisterRawInputDevices failed");
 
             hookProc = HookProc;
+            InstallHook();
+        }
+
+        void InstallHook()
+        {
+            if (hook != IntPtr.Zero) Native.UnhookWindowsHookEx(hook);
             hook = Native.SetWindowsHookEx(Native.WH_MOUSE_LL, hookProc, Native.GetModuleHandle(null), 0);
             if (hook == IntPtr.Zero)
                 hook = Native.SetWindowsHookEx(Native.WH_MOUSE_LL, hookProc, Native.GetModuleHandle("user32.dll"), 0);
             if (hook == IntPtr.Zero)
                 throw new InvalidOperationException("SetWindowsHookEx failed, error " + System.Runtime.InteropServices.Marshal.GetLastWin32Error());
+            lastHookTick = Environment.TickCount;
         }
 
-        // Apply new settings on the fly.
-        public void SetConfig(Config cfg)
+        // Apply new settings on the fly (callable from any thread).
+        public void ApplyConfig(Config cfg)
+        {
+            pendingConfig = cfg;
+            Native.PostMessage(Handle, WM_APPLY_CONFIG, IntPtr.Zero, IntPtr.Zero);
+        }
+
+        // Stop and release everything (callable from any thread).
+        public void Shutdown()
+        {
+            Native.PostMessage(Handle, WM_SHUTDOWN, IntPtr.Zero, IntPtr.Zero);
+        }
+
+        void SetConfig(Config cfg)
         {
             ReleaseActive();
             config = cfg;
@@ -56,7 +104,9 @@ namespace HBExpertMouse
             lastIsTarget = lastDevice != IntPtr.Zero && IsTarget(lastDevice);
         }
 
-        public void Dispose()
+        void IDisposable.Dispose() { Shutdown(); }
+
+        void Dispose()
         {
             if (hook != IntPtr.Zero) { Native.UnhookWindowsHookEx(hook); hook = IntPtr.Zero; }
             ReleaseActive();
@@ -67,6 +117,7 @@ namespace HBExpertMouse
 
         IntPtr HookProc(int nCode, IntPtr wParam, IntPtr lParam)
         {
+            lastHookTick = Environment.TickCount;
             if (nCode >= 0)
             {
                 MouseButton button; bool down;
@@ -76,6 +127,7 @@ namespace HBExpertMouse
                 if (info.dwExtraInfo != Native.OwnInputTag
                     && TryDecodeHook((int)wParam, info.mouseData, out button, out down))
                 {
+                    button = Physical(button);   // settings are per physical button, as raw input reports them
                     bool blocked = HandleButton(button, down);
                     if (LogEnabled && Log != null)
                         Log(string.Format("hook: {0} {1}{2}, last device {3} ({4}) -> {5}",
@@ -138,6 +190,8 @@ namespace HBExpertMouse
         protected override void WndProc(ref Message m)
         {
             if (m.Msg == Native.WM_INPUT) OnRawInput(m.LParam);
+            else if (m.Msg == WM_APPLY_CONFIG) { if (pendingConfig != null) SetConfig(pendingConfig); }
+            else if (m.Msg == WM_SHUTDOWN) { Dispose(); Application.ExitThread(); return; }
             else if (m.Msg == Native.WM_INPUT_DEVICE_CHANGE) isTargetCache.Clear();
             base.WndProc(ref m);
         }
@@ -167,6 +221,14 @@ namespace HBExpertMouse
                 }
 
                 int flags = System.Runtime.InteropServices.Marshal.ReadInt16(buf, (int)hdr + 4) & 0xFFFF;
+                // Every click passes through the hook before it shows up here. If the hook hasn't run
+                // recently, Windows has dropped it: put it back.
+                if ((flags & 0x03FF) != 0 && Environment.TickCount - lastHookTick > 1000)
+                {
+                    InstallHook();
+                    if (LogEnabled && Log != null) Log("hook was dropped by Windows - reinstalled");
+                }
+
                 for (int b = 0; b < 5; b++)
                 {
                     if ((flags & RawDownFlags[b]) == 0) continue;
@@ -201,8 +263,20 @@ namespace HBExpertMouse
 
         // ---------------- output ----------------
 
+        // With Windows' button swap on, the hook reports swapped Left/Right and SendInput swaps
+        // what we send; both directions are the same exchange.
+        static MouseButton Physical(MouseButton b)
+        {
+            if (!Native.ButtonsSwapped) return b;
+            if (b == MouseButton.Left) return MouseButton.Right;
+            if (b == MouseButton.Right) return MouseButton.Left;
+            return b;
+        }
+
+        // Sends a logical click: "Left" is always the primary (normal) click.
         static void Replay(MouseButton b, bool down)
         {
+            b = Physical(b);
             switch (b)
             {
                 case MouseButton.Left: Native.Send(Native.Mouse(down ? Native.MOUSEEVENTF_LEFTDOWN : Native.MOUSEEVENTF_LEFTUP, 0)); break;
@@ -223,9 +297,7 @@ namespace HBExpertMouse
                 case ActionKind.Back: Replay(MouseButton.X1, down); break;
                 case ActionKind.Forward: Replay(MouseButton.X2, down); break;
                 case ActionKind.DoubleClick:
-                    if (down) Native.Send(
-                        Native.Mouse(Native.MOUSEEVENTF_LEFTDOWN, 0), Native.Mouse(Native.MOUSEEVENTF_LEFTUP, 0),
-                        Native.Mouse(Native.MOUSEEVENTF_LEFTDOWN, 0), Native.Mouse(Native.MOUSEEVENTF_LEFTUP, 0));
+                    if (down) for (int i = 0; i < 2; i++) { Replay(MouseButton.Left, true); Replay(MouseButton.Left, false); }
                     break;
                 case ActionKind.Keys: SendKeys(a.Keys, down); break;
                 // Disabled: swallow

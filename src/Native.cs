@@ -35,6 +35,14 @@ namespace HBExpertMouse
         public static extern bool UnhookWindowsHookEx(IntPtr hhk);
         [DllImport("user32.dll")]
         public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+        [DllImport("user32.dll")]
+        static extern int GetSystemMetrics(int index);
+        // Windows "Switch primary and secondary buttons" setting.
+        public static bool ButtonsSwapped { get { return GetSystemMetrics(23 /* SM_SWAPBUTTON */) != 0; } }
+
+        [DllImport("user32.dll")]
+        public static extern bool PostMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);
+        public const int WM_APP = 0x8000;
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
         public static extern IntPtr GetModuleHandle(string lpModuleName);
 

@@ -54,10 +54,11 @@ namespace HBExpertMouse
         public TrayApp(bool showSettings)
         {
             form = new SettingsForm(config, Changed);
-            remapper = new Remapper(config);
-            remapper.RawButtonPressed += (path, button, target) => { if (form.Visible) form.ShowPress(path, button, target); };
-            // Log from the hook asynchronously so the hook itself stays fast.
-            remapper.Log += line => form.BeginInvoke(new Action<string>(form.AddLog), line);
+            remapper = Remapper.Start(config);
+            // These fire on the remapper thread: hand them to the UI asynchronously so it never waits.
+            remapper.RawButtonPressed += (path, button, target) =>
+                ToForm(() => form.ShowPress(path, button, target));
+            remapper.Log += line => ToForm(() => form.AddLog(line));
             form.VisibleChanged += delegate { remapper.LogEnabled = form.Visible; };
 
             var menu = new ContextMenuStrip();
@@ -79,9 +80,16 @@ namespace HBExpertMouse
             if (showSettings) ShowSettings();
         }
 
+        void ToForm(Action a)
+        {
+            if (!remapper.LogEnabled) return;   // window hidden: nothing to show
+            try { form.BeginInvoke(a); }
+            catch (InvalidOperationException) { }
+        }
+
         void Changed()
         {
-            remapper.SetConfig(config);
+            remapper.ApplyConfig(config);
             config.Save();
             UpdateTray();
         }
@@ -101,7 +109,7 @@ namespace HBExpertMouse
 
         protected override void ExitThreadCore()
         {
-            remapper.Dispose();
+            remapper.Shutdown();
             tray.Visible = false;
             tray.Dispose();
             form.Dispose();
