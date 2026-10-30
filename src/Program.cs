@@ -56,6 +56,9 @@ namespace HBExpertMouse
             form = new SettingsForm(config, Changed);
             remapper = new Remapper(config);
             remapper.RawButtonPressed += (path, button, target) => { if (form.Visible) form.ShowPress(path, button, target); };
+            // Log from the hook asynchronously so the hook itself stays fast.
+            remapper.Log += line => form.BeginInvoke(new Action<string>(form.AddLog), line);
+            form.VisibleChanged += delegate { remapper.LogEnabled = form.Visible; };
 
             var menu = new ContextMenuStrip();
             menu.Items.Add("Settings", null, delegate { ShowSettings(); });

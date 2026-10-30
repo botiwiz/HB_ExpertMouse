@@ -24,6 +24,9 @@ namespace HBExpertMouse
 
         // Fired for button presses: (device path, button, is target).
         public event Action<string, MouseButton, bool> RawButtonPressed;
+        // Diagnostic lines; only raised while LogEnabled is set (settings window open).
+        public event Action<string> Log;
+        public bool LogEnabled;
 
         public Remapper(Config cfg)
         {
@@ -38,7 +41,10 @@ namespace HBExpertMouse
 
             hookProc = HookProc;
             hook = Native.SetWindowsHookEx(Native.WH_MOUSE_LL, hookProc, Native.GetModuleHandle(null), 0);
-            if (hook == IntPtr.Zero) throw new InvalidOperationException("SetWindowsHookEx failed");
+            if (hook == IntPtr.Zero)
+                hook = Native.SetWindowsHookEx(Native.WH_MOUSE_LL, hookProc, Native.GetModuleHandle("user32.dll"), 0);
+            if (hook == IntPtr.Zero)
+                throw new InvalidOperationException("SetWindowsHookEx failed, error " + System.Runtime.InteropServices.Marshal.GetLastWin32Error());
         }
 
         // Apply new settings on the fly.
@@ -65,10 +71,21 @@ namespace HBExpertMouse
             {
                 MouseButton button; bool down;
                 var info = (Native.MSLLHOOKSTRUCT)System.Runtime.InteropServices.Marshal.PtrToStructure(lParam, typeof(Native.MSLLHOOKSTRUCT));
-                if ((info.flags & Native.LLMHF_INJECTED) == 0          // never touch synthetic input (ours or others')
-                    && TryDecodeHook((int)wParam, info.mouseData, out button, out down)
-                    && HandleButton(button, down))
-                    return (IntPtr)1;
+                // Skip only our own output. Clicks injected by other software (e.g. a vendor mouse
+                // utility re-sending the trackball's clicks) are still remapped.
+                if (info.dwExtraInfo != Native.OwnInputTag
+                    && TryDecodeHook((int)wParam, info.mouseData, out button, out down))
+                {
+                    bool blocked = HandleButton(button, down);
+                    if (LogEnabled && Log != null)
+                        Log(string.Format("hook: {0} {1}{2}, last device {3} ({4}) -> {5}",
+                            button, down ? "down" : "up",
+                            (info.flags & Native.LLMHF_INJECTED) != 0 ? " [injected by other software]" : "",
+                            lastDevice == IntPtr.Zero ? "none yet" : SettingsForm.ShortId(Native.GetDeviceName(lastDevice)),
+                            lastIsTarget ? "Expert" : "other",
+                            blocked ? "REMAPPED to " + (down ? config.Actions[(int)button].ToString() : "release") : "passed through"));
+                    if (blocked) return (IntPtr)1;
+                }
             }
             return Native.CallNextHookEx(hook, nCode, wParam, lParam);
         }
@@ -150,10 +167,14 @@ namespace HBExpertMouse
                 }
 
                 int flags = System.Runtime.InteropServices.Marshal.ReadInt16(buf, (int)hdr + 4) & 0xFFFF;
-                if (RawButtonPressed == null) return;
                 for (int b = 0; b < 5; b++)
-                    if ((flags & RawDownFlags[b]) != 0)
-                        RawButtonPressed(Native.GetDeviceName(device), (MouseButton)b, lastIsTarget);
+                {
+                    if ((flags & RawDownFlags[b]) == 0) continue;
+                    if (RawButtonPressed != null) RawButtonPressed(Native.GetDeviceName(device), (MouseButton)b, lastIsTarget);
+                    if (LogEnabled && Log != null)
+                        Log(string.Format("raw:  {0} down from {1} ({2})", (MouseButton)b,
+                            SettingsForm.ShortId(Native.GetDeviceName(device)), lastIsTarget ? "Expert" : "other"));
+                }
             }
             finally { System.Runtime.InteropServices.Marshal.FreeHGlobal(buf); }
         }

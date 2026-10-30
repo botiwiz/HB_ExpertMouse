@@ -14,6 +14,8 @@ namespace HBExpertMouse
         public const int WM_MBUTTONDOWN = 0x0207, WM_MBUTTONUP = 0x0208;
         public const int WM_XBUTTONDOWN = 0x020B, WM_XBUTTONUP = 0x020C;
         public const int LLMHF_INJECTED = 0x01;
+        // Tag on every event we send, so the hook can recognise (and ignore) its own output.
+        public static readonly IntPtr OwnInputTag = (IntPtr)0x48424D45;
 
         public delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
 
@@ -138,6 +140,7 @@ namespace HBExpertMouse
             var i = new INPUT { type = INPUT_MOUSE };
             i.u.mi.dwFlags = flags;
             i.u.mi.mouseData = data;
+            i.u.mi.dwExtraInfo = OwnInputTag;
             return i;
         }
 
@@ -145,6 +148,7 @@ namespace HBExpertMouse
         {
             var i = new INPUT { type = INPUT_KEYBOARD };
             i.u.ki.wVk = vk;
+            i.u.ki.dwExtraInfo = OwnInputTag;
             i.u.ki.dwFlags = (up ? KEYEVENTF_KEYUP : 0) | (IsExtendedKey(vk) ? KEYEVENTF_EXTENDEDKEY : 0);
             return i;
         }

@@ -22,6 +22,8 @@ namespace HBExpertMouse
         readonly ComboBox deviceBox = new ComboBox { Width = 230 };
         readonly Button identifyBtn = new Button { Text = "Identify...", AutoSize = true };
         readonly Label status = new Label { AutoSize = true, ForeColor = SystemColors.GrayText, Text = "Press a button on any mouse to see it here." };
+        readonly TextBox logBox = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical,
+            Height = 140, Dock = DockStyle.Fill, Font = new Font(FontFamily.GenericMonospace, 8f), WordWrap = false };
         readonly ComboBox[] actionBoxes = new ComboBox[5];
         readonly TextBox[] keyBoxes = new TextBox[5];
         bool identifying, loading;
@@ -76,6 +78,10 @@ namespace HBExpertMouse
             };
             grid.Controls.Add(hint, 0, 8);
             grid.SetColumnSpan(hint, 3);
+            grid.Controls.Add(new Label { Text = "Diagnostics (newest at the bottom):", AutoSize = true }, 0, 9);
+            grid.SetColumnSpan(grid.GetControlFromPosition(0, 9), 3);
+            grid.Controls.Add(logBox, 0, 10);
+            grid.SetColumnSpan(logBox, 3);
             Controls.Add(grid);
 
             enabledBox.CheckedChanged += delegate { if (!loading) { config.Enabled = enabledBox.Checked; onChanged(); } };
@@ -146,6 +152,18 @@ namespace HBExpertMouse
 
         [System.Runtime.InteropServices.DllImport("user32.dll")]
         static extern short GetKeyState(int vk);
+
+        public void AddLog(string line)
+        {
+            string[] lines = logBox.Lines;
+            int keep = Math.Min(lines.Length, 40);
+            var next = new List<string>();
+            for (int i = lines.Length - keep; i < lines.Length; i++) if (lines[i].Length > 0) next.Add(lines[i]);
+            next.Add(DateTime.Now.ToString("HH:mm:ss.fff") + "  " + line);
+            logBox.Lines = next.ToArray();
+            logBox.SelectionStart = logBox.TextLength;
+            logBox.ScrollToCaret();
+        }
 
         // Called by the remapper for every physical button press.
         public void ShowPress(string devicePath, MouseButton button, bool isTarget)
