@@ -317,7 +317,12 @@ int gui_main(int argc, char **argv)
 
     GtkWidget *win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_title(GTK_WINDOW(win), "HB ExpertMouse");
-    gtk_window_set_icon_name(GTK_WINDOW(win), "input-mouse");
+    /* inside the AppImage the icon sits at the AppDir root */
+    const char *appdir = getenv("APPDIR");
+    gchar *icon = g_strdup_printf("%s/hb_expertmouse.png", appdir ? appdir : ".");
+    if (!appdir || !gtk_window_set_icon_from_file(GTK_WINDOW(win), icon, NULL))
+        gtk_window_set_icon_name(GTK_WINDOW(win), "input-mouse");
+    g_free(icon);
     gtk_window_set_resizable(GTK_WINDOW(win), FALSE);
     gtk_container_set_border_width(GTK_CONTAINER(win), 12);
     g_signal_connect(win, "destroy", G_CALLBACK(gtk_main_quit), NULL);

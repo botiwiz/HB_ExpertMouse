@@ -28,18 +28,11 @@ namespace HBExpertMouse
             }
         }
 
-        // Simple drawn trackball icon, so the exe needs no resource files.
+        // The icon embedded in the exe (build.bat /win32icon), so no separate resource files are needed.
         static Icon MakeIcon()
         {
-            var bmp = new Bitmap(32, 32);
-            using (Graphics g = Graphics.FromImage(bmp))
-            {
-                g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
-                g.FillRectangle(Brushes.DimGray, 2, 6, 28, 22);
-                g.FillEllipse(Brushes.Firebrick, 7, 8, 18, 18);
-                g.FillEllipse(Brushes.LightCoral, 11, 11, 6, 6);
-            }
-            return Icon.FromHandle(bmp.GetHicon());
+            try { return Icon.ExtractAssociatedIcon(Application.ExecutablePath) ?? SystemIcons.Application; }
+            catch (Exception) { return SystemIcons.Application; }
         }
     }
 
