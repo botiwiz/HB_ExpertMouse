@@ -7,7 +7,8 @@ ARCH="${ARCH:-$(uname -m)}"
 rm -rf build && mkdir -p build/AppDir/usr/bin
 gcc -O2 -Wall -std=gnu11 -o build/AppDir/usr/bin/hb_expertmouse src/*.c $(pkg-config --cflags --libs gtk+-3.0)
 strip build/AppDir/usr/bin/hb_expertmouse
-cp appdir/AppRun appdir/hb_expertmouse.desktop appdir/hb_expertmouse.svg build/AppDir/
+cp appdir/AppRun appdir/hb_expertmouse.desktop appdir/hb_expertmouse.png build/AppDir/
+ln -sf hb_expertmouse.png build/AppDir/.DirIcon
 
 if command -v appimagetool >/dev/null; then
     TOOL=appimagetool
