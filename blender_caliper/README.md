@@ -7,7 +7,7 @@ with draggable handles, **Ctrl snapping** and **X/Y/Z axis locking**.
 
 ## Install (Blender 4.2+)
 Edit > Preferences > Get Extensions > ⌄ (top right) > **Install from Disk…** > `hb_caliper.zip`
-(If you installed the older "Caliper Measure" version, uninstall it first.).
+(If you installed the older "Caliper Measure" version, uninstall it first.)
 
 ## Use
 Click the **HB_Caliper** button at the bottom of the toolbar (T panel) — available in Object, Edit, Pose and paint modes — or Sidebar (N) > **HB_Caliper** > *HB_Caliper Tool*.
