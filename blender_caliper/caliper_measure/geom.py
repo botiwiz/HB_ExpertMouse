@@ -90,14 +90,17 @@ def ray_to_constraint(origin, direction, anchor, axis=None, plane=None):
 # Snap targets
 
 class SnapTargets:
-    """All snappable points (vertices, edge midpoints, face centers, origins,
-    other measurement handles), gathered lazily once per drag."""
+    """Snappable geometry, gathered once per drag: points (vertices, edge
+    midpoints, origins, 3D cursor, other measurement handles) and edges."""
 
-    KIND_BIAS = {'VERT': 0.0, 'HANDLE': 0.0, 'ORIGIN': 2.0, 'CURSOR': 2.0, 'MID': 4.0, 'FACE': 6.0}
+    KIND_BIAS = {'VERT': 0.0, 'HANDLE': 0.0, 'ORIGIN': 2.0, 'CURSOR': 2.0, 'MID': 3.0}
+    MAX_VIS_CHECKS = 24
 
     def __init__(self, context, exclude_handles=()):
+        self.context = context
         self.points = []   # list of (N,3) arrays
         self.kinds = []    # kind per array
+        self.edge_list = []  # list of (M,2,3) arrays
         self._collect(context, set(exclude_handles))
         if self.points:
             self.all_pts = np.concatenate(self.points)
@@ -107,11 +110,17 @@ class SnapTargets:
                                             for i, p in enumerate(self.points)])
         else:
             self.all_pts = np.zeros((0, 3))
+        self.edges = np.concatenate(self.edge_list) if self.edge_list else np.zeros((0, 2, 3))
 
     def _add(self, arr, kind):
         if len(arr):
             self.points.append(np.asarray(arr, dtype=np.float64).reshape(-1, 3))
             self.kinds.append(kind)
+
+    def _add_edges(self, a, b):
+        if len(a):
+            self.edge_list.append(np.stack([a, b], axis=1))
+            self._add((a + b) * 0.5, 'MID')
 
     def _collect(self, context, exclude):
         depsgraph = context.evaluated_depsgraph_get()
@@ -122,11 +131,12 @@ class SnapTargets:
             if obj.type == 'MESH' and obj.mode == 'EDIT':
                 bm = bmesh.from_edit_mesh(obj.data)
                 verts = [v.co for v in bm.verts if not v.hide]
-                mids = [(e.verts[0].co + e.verts[1].co) * 0.5 for e in bm.edges if not e.hide]
-                faces = [f.calc_center_median() for f in bm.faces if not f.hide]
-                for data, kind in ((verts, 'VERT'), (mids, 'MID'), (faces, 'FACE')):
-                    if data:
-                        self._add(_xform(np.array(data), mw), kind)
+                if verts:
+                    self._add(_xform(np.array(verts), mw), 'VERT')
+                edges = [(e.verts[0].co, e.verts[1].co) for e in bm.edges if not e.hide]
+                if edges:
+                    e = np.array(edges, dtype=np.float64)
+                    self._add_edges(_xform(e[:, 0], mw), _xform(e[:, 1], mw))
             elif obj.type in {'MESH', 'CURVE', 'SURFACE', 'FONT', 'META'}:
                 ob_eval = obj.evaluated_get(depsgraph)
                 try:
@@ -138,17 +148,13 @@ class SnapTargets:
                 try:
                     co = np.empty(len(me.vertices) * 3)
                     me.vertices.foreach_get("co", co)
-                    co = co.reshape(-1, 3)
-                    self._add(_xform(co, mw), 'VERT')
-                    if len(me.edges) and len(me.edges) < 2_000_000:
+                    co = _xform(co.reshape(-1, 3), mw)
+                    self._add(co, 'VERT')
+                    if len(me.edges):
                         ev = np.empty(len(me.edges) * 2, dtype=np.int32)
                         me.edges.foreach_get("vertices", ev)
                         ev = ev.reshape(-1, 2)
-                        self._add(_xform((co[ev[:, 0]] + co[ev[:, 1]]) * 0.5, mw), 'MID')
-                    if len(me.polygons) and len(me.polygons) < 2_000_000:
-                        fc = np.empty(len(me.polygons) * 3)
-                        me.polygons.foreach_get("center", fc)
-                        self._add(_xform(fc.reshape(-1, 3), mw), 'FACE')
+                        self._add_edges(co[ev[:, 0]], co[ev[:, 1]])
                 finally:
                     ob_eval.to_mesh_clear()
         self._add(origins, 'ORIGIN')
@@ -164,17 +170,72 @@ class SnapTargets:
                 handles.append(tuple(m.end))
         self._add(handles, 'HANDLE')
 
-    def nearest(self, region, rv3d, mouse, radius):
-        """Return (Vector, kind) of the best target within radius pixels, or None."""
+    def _visible(self, region, rv3d, co, xray):
+        if xray:
+            return True
+        p2 = to_2d(region, rv3d, co)
+        if p2 is None:
+            return False
+        origin, direction = mouse_ray(region, rv3d, p2)
+        dist = (co - origin).length
+        hit, loc, *_ = self.context.scene.ray_cast(self.context.evaluated_depsgraph_get(), origin, direction)
+        return not hit or (loc - origin).length >= dist - (1e-4 * dist + 1e-5)
+
+    def nearest(self, region, rv3d, mouse, radius, xray=False):
+        """Closest visible snap target within radius pixels: a vertex/point, or the
+        closest point along an edge. Points win when they're about as close as
+        the edge (so corners and midpoints stay easy to hit). Returns (Vector, kind) or None."""
+        point = self._nearest_point(region, rv3d, mouse, radius, xray)
+        edge = self._nearest_edge(region, rv3d, mouse, radius * 0.75, xray)
+        if point and (not edge or point[2] <= 8.0 or point[2] <= edge[2] + 4.0):
+            return point[0], point[1]
+        if edge:
+            return edge[0], 'EDGE'
+        return None
+
+    def _nearest_point(self, region, rv3d, mouse, radius, xray):
         if not len(self.all_pts):
             return None
+        mx, my = mouse[0], mouse[1]
         xy, ok = project_points(region, rv3d, self.all_pts)
-        d = np.hypot(xy[:, 0] - mouse[0], xy[:, 1] - mouse[1])
-        d = np.where(ok & (d <= radius), d + self.all_bias, np.inf)
-        i = int(np.argmin(d))
-        if not math.isfinite(d[i]):
+        raw = np.hypot(xy[:, 0] - mx, xy[:, 1] - my)
+        d = np.where(ok & (raw <= radius), raw + self.all_bias, np.inf)
+        for i in np.argsort(d)[:self.MAX_VIS_CHECKS]:
+            if not math.isfinite(d[i]):
+                break
+            co = Vector(self.all_pts[i])
+            if self._visible(region, rv3d, co, xray):
+                return co, self.kinds[int(self.all_kind[i])], float(d[i])
+        return None
+
+    def _nearest_edge(self, region, rv3d, mouse, radius, xray):
+        if not len(self.edges):
             return None
-        return Vector(self.all_pts[i]), self.kinds[int(self.all_kind[i])]
+        mx, my = mouse[0], mouse[1]
+        xy, ok = project_points(region, rv3d, self.edges.reshape(-1, 3))
+        a, b = xy[0::2], xy[1::2]
+        ok = ok[0::2] & ok[1::2]
+        ab = b - a
+        l2 = np.einsum('ij,ij->i', ab, ab)
+        t = np.clip(((mx - a[:, 0]) * ab[:, 0] + (my - a[:, 1]) * ab[:, 1]) / np.maximum(l2, 1e-12), 0, 1)
+        p = a + ab * t[:, None]
+        d = np.hypot(p[:, 0] - mx, p[:, 1] - my)
+        d = np.where(ok & (d <= radius), d, np.inf)
+        origin, direction = mouse_ray(region, rv3d, Vector((mx, my)))
+        for i in np.argsort(d)[:self.MAX_VIS_CHECKS]:
+            if not math.isfinite(d[i]):
+                break
+            e0, e1 = Vector(self.edges[i, 0]), Vector(self.edges[i, 1])
+            seg = e1 - e0
+            res = intersect_line_line(e0, e1, origin, origin + direction) if seg.length_squared > 1e-18 else None
+            if res:
+                tt = (res[0] - e0).dot(seg) / seg.length_squared
+                co = e0 + seg * min(1.0, max(0.0, tt))
+            else:
+                co = e0.lerp(e1, float(t[i]))
+            if self._visible(region, rv3d, co, xray):
+                return co, 'EDGE', float(d[i])
+        return None
 
 
 def _xform(co, mw):

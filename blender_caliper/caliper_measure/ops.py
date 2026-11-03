@@ -80,7 +80,9 @@ X/Y/Z: lock to an axis (Shift+X/Y/Z: lock to the plane)"""
                 [(self.index, self.which)]
             self.snaps = geom.SnapTargets(context, exclude)
         radius = context.scene.caliper.snap_radius * geom.ui_scale(context)
-        hit = self.snaps.nearest(self.region, self.rv3d, mouse, radius)
+        space = context.space_data
+        xray = bool(space and getattr(space, "shading", None) and space.shading.show_xray)
+        hit = self.snaps.nearest(self.region, self.rv3d, mouse, radius, xray)
         if hit:
             return hit
         loc = geom.surface_hit(context, self.region, self.rv3d, mouse)
@@ -95,9 +97,14 @@ X/Y/Z: lock to an axis (Shift+X/Y/Z: lock to the plane)"""
         anchor = self.anchor
         if snap:
             return geom.constrain(anchor, snap[0], self.axis, self.plane)
+        origin, direction = geom.mouse_ray(self.region, self.rv3d, mouse)
         if self.axis or self.plane:
-            origin, direction = geom.mouse_ray(self.region, self.rv3d, mouse)
             p = geom.ray_to_constraint(origin, direction, anchor, self.axis, self.plane)
+            if p is not None:
+                return p
+        elif self.which != 'BOTH':
+            # Like Blender's Measure tool: follow the surface under the mouse.
+            p = geom.surface_hit(context, self.region, self.rv3d, mouse)
             if p is not None:
                 return p
         return geom.on_view_plane(self.region, self.rv3d, mouse, self.grab_co)

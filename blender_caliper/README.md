@@ -13,10 +13,10 @@ Pick the **Caliper** tool in the 3D view toolbar (next to Measure), or go to Sid
 
 | Action | Result |
 |---|---|
-| Drag on empty space | New measurement |
+| Drag from anywhere | New measurement. Like Blender's Measure tool, both ends follow the surface under the mouse (vertex/edge/face → vertex/edge/face) |
 | Drag a handle | Move that end |
 | Drag the line | Move the whole measurement |
-| Hold **Ctrl** while dragging | Snap to the nearest vertex / edge midpoint / face center / object origin / 3D cursor / other handle (falls back to the surface under the mouse) |
+| Hold **Ctrl** while dragging (or when pressing) | Snap to a vertex, any point along an edge, an edge midpoint, an object origin, the 3D cursor or another handle; otherwise the surface. Hidden geometry is ignored unless X-ray is on |
 | **X / Y / Z** while dragging | Lock to that axis (press again to unlock). With Ctrl, the handle slides along the axis to line up with the snap target |
 | **Shift+X/Y/Z** while dragging | Lock to the plane (moves in the other two axes) |
 | Right-click / Esc | Cancel the drag |
