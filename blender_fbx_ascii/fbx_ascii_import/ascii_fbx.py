@@ -37,9 +37,9 @@ _ARRAY_BOOL = {'Visibility', 'Hole'}
 # Scalar elements whose numbers are doubles even if written without a decimal point.
 _SCALAR_FLOAT64 = {'Default', 'Position', 'Up', 'LookAt', 'CameraOrthoZoom'}
 # Scalar elements whose numbers are int64 (object ids, times).
+# Elements whose first string is a "Class::Name" object name.
+_NAME_FIRST = {'SceneInfo', 'TextureName', 'Media'}
 _SCALAR_INT64 = {'RootNode', 'Node', 'LocalTime', 'ReferenceTime'}
-# Children of these elements carry an int64 object id as the first value.
-_ID_PARENTS = {'Objects', 'Documents'}
 
 _INT32_MIN, _INT32_MAX = -(1 << 31), (1 << 31) - 1
 
@@ -308,7 +308,8 @@ def _convert(encode_bin, node, parent_name, out_parent):
         except Exception:
             elem.add_bytes(b'')
     else:
-        is_obj = parent_name in _ID_PARENTS
+        is_obj = parent_name == 'Objects' or (parent_name == 'Documents' and name == 'Document')
+        name_index = 0 if name in _NAME_FIRST else 1 if is_obj else -1
         is_conn = name == 'C' and parent_name == 'Connections'
         for i, v in enumerate(values):
             if isinstance(v, _Array):
@@ -326,7 +327,7 @@ def _convert(encode_bin, node, parent_name, out_parent):
                 else:
                     elem.add_string(b)
             elif isinstance(v, str):
-                if is_obj and i == 1:
+                if i == name_index:
                     elem.add_string(_swap_class_name(v))
                 else:
                     elem.add_string(v.encode('utf-8'))
@@ -364,15 +365,13 @@ def convert_file(src, dst, encode_bin):
     with encode_bin.FBXElem.enable_multithreading_cm():
         for n in nodes:
             _convert(encode_bin, n, '', root)
-    # The binary writer expects these two root elements to exist.
-    names = {e.id for e in root.elems}
-    if b'FileId' not in names:
-        e = encode_bin.FBXElem(b'FileId')
-        e.add_bytes(b'\x00' * 16)
-        root.elems.insert(1, e)
-    if b'CreationTime' not in names:
-        e = encode_bin.FBXElem(b'CreationTime')
-        e.add_string(b'1970-01-01 10:00:00:000')
-        root.elems.insert(2, e)
+    # The binary writer overwrites FileId/CreationTime and requires them to be
+    # bytes/string, so always provide fresh ones.
+    root.elems = [e for e in root.elems if e.id not in (b'FileId', b'CreationTime')]
+    file_id = encode_bin.FBXElem(b'FileId')
+    file_id.add_bytes(b'\x00' * 16)
+    creation = encode_bin.FBXElem(b'CreationTime')
+    creation.add_string(b'1970-01-01 10:00:00:000')
+    root.elems[1:1] = [file_id, creation]
     encode_bin.write(dst, root, version)
     return version
