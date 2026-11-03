@@ -12,7 +12,7 @@ def _redraw(self, context):
                 area.tag_redraw()
 
 
-class CaliperMeasure(PropertyGroup):
+class HBCaliperMeasure(PropertyGroup):
     name: StringProperty(name="Name", default="Measure")
     start: FloatVectorProperty(name="Start", size=3, subtype='TRANSLATION', unit='LENGTH', update=_redraw)
     end: FloatVectorProperty(name="End", size=3, subtype='TRANSLATION', unit='LENGTH', update=_redraw)
@@ -29,8 +29,8 @@ UNIT_ITEMS = (
 )
 
 
-class CaliperSettings(PropertyGroup):
-    measures: CollectionProperty(type=CaliperMeasure)
+class HBCaliperSettings(PropertyGroup):
+    measures: CollectionProperty(type=HBCaliperMeasure)
     active_index: IntProperty(name="Active", default=0, update=_redraw)
 
     show: BoolProperty(name="Show Measurements", default=True, update=_redraw)
@@ -45,16 +45,16 @@ class CaliperSettings(PropertyGroup):
                              default=24, min=4, max=200)
 
 
-classes = (CaliperMeasure, CaliperSettings)
+classes = (HBCaliperMeasure, HBCaliperSettings)
 
 
 def register():
     for c in classes:
         bpy.utils.register_class(c)
-    bpy.types.Scene.caliper = bpy.props.PointerProperty(type=CaliperSettings)
+    bpy.types.Scene.hb_caliper = bpy.props.PointerProperty(type=HBCaliperSettings)
 
 
 def unregister():
-    del bpy.types.Scene.caliper
+    del bpy.types.Scene.hb_caliper
     for c in reversed(classes):
         bpy.utils.unregister_class(c)

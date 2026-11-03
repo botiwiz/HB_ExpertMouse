@@ -1,4 +1,4 @@
-# Caliper Measure for Blender
+# HB_Caliper for Blender
 
 Measurements that **stay visible in every mode** (Object, Edit, Pose, paint modes…),
 with draggable handles, **Ctrl snapping** and **X/Y/Z axis locking**.
@@ -6,10 +6,11 @@ with draggable handles, **Ctrl snapping** and **X/Y/Z axis locking**.
 ![preview](preview.png)
 
 ## Install (Blender 4.2+)
-Edit > Preferences > Get Extensions > ⌄ (top right) > **Install from Disk…** > `caliper_measure.zip`.
+Edit > Preferences > Get Extensions > ⌄ (top right) > **Install from Disk…** > `hb_caliper.zip`
+(If you installed the older "Caliper Measure" version, uninstall it first.).
 
 ## Use
-Pick the **Caliper** tool in the 3D view toolbar (next to Measure), or go to Sidebar (N) > **Caliper** > *Caliper Tool*.
+Click the **HB_Caliper** button at the bottom of the toolbar (T panel) — available in Object, Edit, Pose and paint modes — or Sidebar (N) > **HB_Caliper** > *HB_Caliper Tool*.
 
 | Action | Result |
 |---|---|
@@ -29,4 +30,4 @@ decimals, color, ruler ticks, X/Y/Z deltas, snap radius.
 
 Measurements are saved in the .blend file (per scene) and support undo.
 
-Rebuild the zip after editing: `python build_zip.py`
+Rebuild the zip after editing: `python build_zip.py` (toolbar icon: `python make_icon.py`)

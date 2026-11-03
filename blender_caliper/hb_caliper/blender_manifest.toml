@@ -1,8 +1,8 @@
 schema_version = "1.0.0"
 
-id = "caliper_measure"
+id = "hb_caliper"
 version = "1.0.0"
-name = "Caliper Measure"
+name = "HB_Caliper"
 tagline = "Measurements that stay visible in every mode, with snapping"
 maintainer = "HB"
 type = "add-on"

@@ -161,7 +161,7 @@ class SnapTargets:
         self._add([tuple(context.scene.cursor.location)], 'CURSOR')
 
         handles = []
-        for i, m in enumerate(context.scene.caliper.measures):
+        for i, m in enumerate(context.scene.hb_caliper.measures):
             if not m.visible:
                 continue
             if (i, 'START') not in exclude:
@@ -254,7 +254,7 @@ def surface_hit(context, region, rv3d, mouse):
 def format_length(context, value_bu):
     """Format a length given in Blender units according to the add-on/scene settings."""
     scene = context.scene
-    settings = scene.caliper
+    settings = scene.hb_caliper
     us = scene.unit_settings
     prec = settings.precision
     meters = value_bu * us.scale_length

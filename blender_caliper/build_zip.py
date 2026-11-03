@@ -1,13 +1,15 @@
-"""Package the extension into caliper_measure.zip (install via Blender: Edit > Preferences > Get Extensions > Install from Disk)."""
+"""Package the extension into hb_caliper.zip (install via Blender: Edit > Preferences > Get Extensions > Install from Disk)."""
 import os
 import zipfile
 
 here = os.path.dirname(os.path.abspath(__file__))
-src = os.path.join(here, "caliper_measure")
-out = os.path.join(here, "caliper_measure.zip")
+src = os.path.join(here, "hb_caliper")
+out = os.path.join(here, "hb_caliper.zip")
 
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-    for name in sorted(os.listdir(src)):
-        if name.endswith((".py", ".toml")):
-            z.write(os.path.join(src, name), name)
+    for root, _dirs, files in os.walk(src):
+        for name in sorted(files):
+            if name.endswith((".py", ".toml", ".dat")):
+                full = os.path.join(root, name)
+                z.write(full, os.path.relpath(full, src))
 print("Wrote", out)

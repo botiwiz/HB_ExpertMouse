@@ -1,4 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
+import os
+
 import bmesh
 import bpy
 from bpy.props import EnumProperty, IntProperty
@@ -19,7 +21,7 @@ def tag_redraw_all(context):
 
 def hit_test(context, region, rv3d, mouse):
     """Return (index, 'START'|'END'|'BOTH') under the mouse, or None."""
-    settings = context.scene.caliper
+    settings = context.scene.hb_caliper
     if not settings.show:
         return None
     mouse = Vector(mouse)
@@ -52,12 +54,12 @@ def _mouse(event, region):
     return Vector((event.mouse_x - region.x, event.mouse_y - region.y))
 
 
-class CALIPER_OT_drag(bpy.types.Operator):
+class HB_CALIPER_OT_drag(bpy.types.Operator):
     """Create a measurement, or drag a measurement handle.
 Ctrl: snap to vertices, edge midpoints, face centers, origins and other handles.
 X/Y/Z: lock to an axis (Shift+X/Y/Z: lock to the plane)"""
-    bl_idname = "caliper.drag"
-    bl_label = "Caliper Measure"
+    bl_idname = "hb_caliper.drag"
+    bl_label = "HB_Caliper"
     bl_options = {'REGISTER', 'UNDO', 'BLOCKING', 'GRAB_CURSOR'}
 
     @classmethod
@@ -79,7 +81,7 @@ X/Y/Z: lock to an axis (Shift+X/Y/Z: lock to the plane)"""
             exclude = [(self.index, 'START'), (self.index, 'END')] if self.which == 'BOTH' else \
                 [(self.index, self.which)]
             self.snaps = geom.SnapTargets(context, exclude)
-        radius = context.scene.caliper.snap_radius * geom.ui_scale(context)
+        radius = context.scene.hb_caliper.snap_radius * geom.ui_scale(context)
         space = context.space_data
         xray = bool(space and getattr(space, "shading", None) and space.shading.show_xray)
         hit = self.snaps.nearest(self.region, self.rv3d, mouse, radius, xray)
@@ -110,7 +112,7 @@ X/Y/Z: lock to an axis (Shift+X/Y/Z: lock to the plane)"""
         return geom.on_view_plane(self.region, self.rv3d, mouse, self.grab_co)
 
     def _apply(self, context, event):
-        m = context.scene.caliper.measures[self.index]
+        m = context.scene.hb_caliper.measures[self.index]
         pos = self._solve(context, event)
         if self.which == 'BOTH':
             delta = pos - self.grab_co
@@ -129,7 +131,7 @@ X/Y/Z: lock to an axis (Shift+X/Y/Z: lock to the plane)"""
         elif self.plane:
             lock = "  |  Locked: %s plane" % "".join(a for a in "XYZ" if a != self.plane)
         context.area.header_text_set(
-            "Caliper: %s%s  |  Ctrl: snap  |  X/Y/Z: axis, Shift+X/Y/Z: plane  |  "
+            "HB_Caliper: %s%s  |  Ctrl: snap  |  X/Y/Z: axis, Shift+X/Y/Z: plane  |  "
             "LMB release: confirm  |  RMB/Esc: cancel" % (length, lock))
 
     def _finish(self, context):
@@ -142,7 +144,7 @@ X/Y/Z: lock to an axis (Shift+X/Y/Z: lock to the plane)"""
     def invoke(self, context, event):
         self.region = context.region
         self.rv3d = context.region_data
-        settings = context.scene.caliper
+        settings = context.scene.hb_caliper
         mouse = _mouse(event, self.region)
         self.snaps = None
         self.axis = None
@@ -195,7 +197,7 @@ X/Y/Z: lock to an axis (Shift+X/Y/Z: lock to the plane)"""
         return {'RUNNING_MODAL'}
 
     def modal(self, context, event):
-        settings = context.scene.caliper
+        settings = context.scene.hb_caliper
         if self.index >= len(settings.measures):
             self._finish(context)
             return {'CANCELLED'}
@@ -243,9 +245,9 @@ X/Y/Z: lock to an axis (Shift+X/Y/Z: lock to the plane)"""
         return {'RUNNING_MODAL'}
 
 
-class CALIPER_OT_delete_at_cursor(bpy.types.Operator):
+class HB_CALIPER_OT_delete_at_cursor(bpy.types.Operator):
     """Delete the measurement under the mouse"""
-    bl_idname = "caliper.delete_at_cursor"
+    bl_idname = "hb_caliper.delete_at_cursor"
     bl_label = "Delete Measurement Under Mouse"
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -255,23 +257,23 @@ class CALIPER_OT_delete_at_cursor(bpy.types.Operator):
         hit = hit_test(context, context.region, context.region_data, _mouse(event, context.region))
         if not hit:
             return {'CANCELLED'}
-        settings = context.scene.caliper
+        settings = context.scene.hb_caliper
         settings.measures.remove(hit[0])
         settings.active_index = max(0, min(settings.active_index, len(settings.measures) - 1))
         tag_redraw_all(context)
         return {'FINISHED'}
 
 
-class CALIPER_OT_remove(bpy.types.Operator):
+class HB_CALIPER_OT_remove(bpy.types.Operator):
     """Remove a measurement"""
-    bl_idname = "caliper.remove"
+    bl_idname = "hb_caliper.remove"
     bl_label = "Remove Measurement"
     bl_options = {'REGISTER', 'UNDO'}
 
     index: IntProperty(default=-1)
 
     def execute(self, context):
-        settings = context.scene.caliper
+        settings = context.scene.hb_caliper
         i = self.index if self.index >= 0 else settings.active_index
         if 0 <= i < len(settings.measures):
             settings.measures.remove(i)
@@ -280,36 +282,36 @@ class CALIPER_OT_remove(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class CALIPER_OT_clear(bpy.types.Operator):
+class HB_CALIPER_OT_clear(bpy.types.Operator):
     """Remove all measurements"""
-    bl_idname = "caliper.clear"
+    bl_idname = "hb_caliper.clear"
     bl_label = "Clear All Measurements"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        context.scene.caliper.measures.clear()
-        context.scene.caliper.active_index = 0
+        context.scene.hb_caliper.measures.clear()
+        context.scene.hb_caliper.active_index = 0
         tag_redraw_all(context)
         return {'FINISHED'}
 
 
-class CALIPER_OT_swap(bpy.types.Operator):
+class HB_CALIPER_OT_swap(bpy.types.Operator):
     """Swap start and end of the active measurement"""
-    bl_idname = "caliper.swap"
+    bl_idname = "hb_caliper.swap"
     bl_label = "Swap Ends"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
-        s = context.scene.caliper
+        s = context.scene.hb_caliper
         if 0 <= s.active_index < len(s.measures):
             m = s.measures[s.active_index]
             m.start, m.end = Vector(m.end), Vector(m.start)
         return {'FINISHED'}
 
 
-class CALIPER_OT_from_selection(bpy.types.Operator):
+class HB_CALIPER_OT_from_selection(bpy.types.Operator):
     """Add a measurement between two selected vertices (Edit Mode) or two selected objects"""
-    bl_idname = "caliper.from_selection"
+    bl_idname = "hb_caliper.from_selection"
     bl_label = "Measure Selection"
     bl_options = {'REGISTER', 'UNDO'}
 
@@ -330,7 +332,7 @@ class CALIPER_OT_from_selection(bpy.types.Operator):
         if len(pts) != 2:
             self.report({'WARNING'}, "Select exactly 2 vertices (Edit Mode) or 2 objects")
             return {'CANCELLED'}
-        s = context.scene.caliper
+        s = context.scene.hb_caliper
         m = s.measures.add()
         m.name = "Measure %d" % len(s.measures)
         m.start, m.end = pts
@@ -346,31 +348,33 @@ TOOL_MODES = ('OBJECT', 'EDIT_MESH', 'EDIT_CURVE', 'EDIT_CURVES', 'EDIT_ARMATURE
               'EDIT_METABALL', 'EDIT_TEXT', 'POSE', 'PAINT_WEIGHT', 'PAINT_VERTEX', 'PAINT_TEXTURE')
 
 _KEYMAP = (
-    ("caliper.drag", {"type": 'LEFTMOUSE', "value": 'PRESS'}, None),
-    ("caliper.drag", {"type": 'LEFTMOUSE', "value": 'PRESS', "ctrl": True}, None),
-    ("caliper.delete_at_cursor", {"type": 'DEL', "value": 'PRESS'}, None),
-    ("caliper.delete_at_cursor", {"type": 'BACK_SPACE', "value": 'PRESS'}, None),
+    ("hb_caliper.drag", {"type": 'LEFTMOUSE', "value": 'PRESS'}, None),
+    ("hb_caliper.drag", {"type": 'LEFTMOUSE', "value": 'PRESS', "ctrl": True}, None),
+    ("hb_caliper.delete_at_cursor", {"type": 'DEL', "value": 'PRESS'}, None),
+    ("hb_caliper.delete_at_cursor", {"type": 'BACK_SPACE', "value": 'PRESS'}, None),
 )
 
 _tools = []
+# Absolute path (without .dat) to the custom toolbar icon.
+_ICON = os.path.join(os.path.dirname(__file__), "icons", "hb_caliper.tool")
 
 
 def _make_tool(mode):
-    return type("CALIPER_TL_%s" % mode.lower(), (bpy.types.WorkSpaceTool,), {
+    return type("HB_CALIPER_TL_%s" % mode.lower(), (bpy.types.WorkSpaceTool,), {
         "bl_space_type": 'VIEW_3D',
         "bl_context_mode": mode,
-        "bl_idname": "caliper.tool",
-        "bl_label": "Caliper",
+        "bl_idname": "hb_caliper.tool",
+        "bl_label": "HB_Caliper",
         "bl_description": ("Measure distances that stay visible in every mode.\n"
                            "Drag: new measurement / move a handle (drag the line to move both).\n"
                            "Ctrl while dragging: snap.  X/Y/Z: lock axis.  Del: delete under mouse"),
-        "bl_icon": "ops.view3d.ruler",
+        "bl_icon": _ICON,
         "bl_keymap": _KEYMAP,
     })
 
 
-classes = (CALIPER_OT_drag, CALIPER_OT_delete_at_cursor, CALIPER_OT_remove, CALIPER_OT_clear,
-           CALIPER_OT_swap, CALIPER_OT_from_selection)
+classes = (HB_CALIPER_OT_drag, HB_CALIPER_OT_delete_at_cursor, HB_CALIPER_OT_remove, HB_CALIPER_OT_clear,
+           HB_CALIPER_OT_swap, HB_CALIPER_OT_from_selection)
 
 
 def register():
@@ -379,9 +383,9 @@ def register():
     for mode in TOOL_MODES:
         tool = _make_tool(mode)
         try:
-            bpy.utils.register_tool(tool, after={"builtin.measure"}, separator=False)
+            bpy.utils.register_tool(tool, separator=True)  # own button at the bottom of the toolbar
         except Exception as ex:  # mode not available in this Blender version
-            print("Caliper: no tool for mode %s (%s)" % (mode, ex))
+            print("HB_Caliper: no tool for mode %s (%s)" % (mode, ex))
             continue
         _tools.append(tool)
 

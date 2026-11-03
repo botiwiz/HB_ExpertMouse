@@ -202,9 +202,9 @@ def draw_px(context=None, region=None, rv3d=None):
     region = region or context.region
     rv3d = rv3d or context.region_data
     scene = context.scene
-    if scene is None or rv3d is None or not hasattr(scene, "caliper"):
+    if scene is None or rv3d is None or not hasattr(scene, "hb_caliper"):
         return
-    settings = scene.caliper
+    settings = scene.hb_caliper
     if not settings.show:
         return
     viewport = (region.width, region.height)
