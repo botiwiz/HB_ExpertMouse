@@ -18,8 +18,8 @@ state = {
 }
 
 AXIS_COLORS = {'X': (1.0, 0.25, 0.3, 1.0), 'Y': (0.45, 0.85, 0.2, 1.0), 'Z': (0.25, 0.55, 1.0, 1.0)}
-LCD_BG = (0.72, 0.77, 0.66, 0.95)
-LCD_FG = (0.06, 0.07, 0.05, 1.0)
+LCD_BG = (0.0, 0.0, 0.0, 0.9)
+LCD_FG = (1.0, 1.0, 1.0, 1.0)
 OUTLINE = (0.0, 0.0, 0.0, 0.6)
 
 HANDLE_RADIUS = 6.0
@@ -60,6 +60,21 @@ def _tris(coords, color):
 
 def _rect(x0, y0, x1, y1, color):
     _tris([(x0, y0), (x1, y0), (x1, y1), (x0, y0), (x1, y1), (x0, y1)], color)
+
+
+def _rounded_rect(x0, y0, x1, y1, r, color, seg=6):
+    r = max(0.0, min(r, (x1 - x0) / 2, (y1 - y0) / 2))
+    pts = []
+    for cx, cy, a0 in ((x1 - r, y1 - r, 0.0), (x0 + r, y1 - r, 90.0),
+                       (x0 + r, y0 + r, 180.0), (x1 - r, y0 + r, 270.0)):
+        for i in range(seg + 1):
+            a = math.radians(a0 + 90.0 * i / seg)
+            pts.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+    c = ((x0 + x1) / 2, (y0 + y1) / 2)
+    tris = []
+    for i in range(len(pts)):
+        tris += [c, pts[i], pts[(i + 1) % len(pts)]]
+    _tris(tris, color)
 
 
 def _circle_pts(c, r, seg=20):
@@ -173,14 +188,13 @@ def draw_measure(context, region, rv3d, idx, m, settings, viewport):
     box_h = th + extra_h + 2 * pad
     x0, y1 = mid.x - box_w / 2, mid.y + th + pad
     y0 = y1 - box_h
-    _rect(x0 - 1, y0 - 1, x0 + box_w + 1, y1 + 1, col)
-    _rect(x0, y0, x0 + box_w, y1, LCD_BG)
+    _rounded_rect(x0, y0, x0 + box_w, y1, 6 * scale, LCD_BG)
     _text(mid.x, y1 - pad - th, text, size, LCD_FG)
     y = y1 - pad - th
     for ax, s in lines_extra:
         y -= line_adv
         c = AXIS_COLORS[ax]
-        _text(mid.x, y, "%s %s" % (ax, s), small, (c[0] * 0.55, c[1] * 0.55, c[2] * 0.55, 1.0))
+        _text(mid.x, y, "%s %s" % (ax, s), small, c)
 
 
 def draw_px(context=None, region=None, rv3d=None):
