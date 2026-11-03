@@ -1,0 +1,17 @@
+schema_version = "1.0.0"
+
+id = "fbx_ascii_import"
+version = "1.0.0"
+name = "ASCII FBX Importer"
+tagline = "Import ASCII FBX files with Blender's FBX importer"
+maintainer = "HB"
+type = "add-on"
+
+tags = ["Import-Export"]
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-2.0-or-later"]
+
+[permissions]
+files = "Reads the chosen FBX file and writes a temporary binary copy next to it"
