@@ -19,6 +19,15 @@ _UNIT_FACTORS = {  # meters per unit, suffix
 }
 
 
+def ui_scale(context=None):
+    import bpy
+    try:
+        v = (context or bpy.context).preferences.system.ui_scale
+    except AttributeError:
+        v = 1.0
+    return v if v > 0 else 1.0
+
+
 # ----------------------------------------------------------------------------
 # Projection
 

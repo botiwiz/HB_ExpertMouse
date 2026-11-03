@@ -29,10 +29,7 @@ _handles = []
 
 
 def _ui_scale():
-    try:
-        return bpy.context.preferences.system.ui_scale
-    except AttributeError:
-        return 1.0
+    return geom.ui_scale()
 
 
 # ----------------------------------------------------------------------------
@@ -166,12 +163,12 @@ def draw_measure(context, region, rv3d, idx, m, settings, viewport):
     small = 11 * scale
     extra_h = 0.0
     extra_w = 0.0
+    line_adv = small + 4 * scale
     if lines_extra:
         blf.size(0, small)
         for ax, s in lines_extra:
-            w, h = blf.dimensions(0, "%s %s" % (ax, s))
-            extra_w = max(extra_w, w)
-            extra_h += h + 3 * scale
+            extra_w = max(extra_w, blf.dimensions(0, "%s %s" % (ax, s))[0])
+        extra_h = line_adv * len(lines_extra)
     box_w = max(tw, extra_w) + 2 * pad
     box_h = th + extra_h + 2 * pad
     x0, y1 = mid.x - box_w / 2, mid.y + th + pad
@@ -181,7 +178,7 @@ def draw_measure(context, region, rv3d, idx, m, settings, viewport):
     _text(mid.x, y1 - pad - th, text, size, LCD_FG)
     y = y1 - pad - th
     for ax, s in lines_extra:
-        y -= small + 3 * scale
+        y -= line_adv
         c = AXIS_COLORS[ax]
         _text(mid.x, y, "%s %s" % (ax, s), small, (c[0] * 0.55, c[1] * 0.55, c[2] * 0.55, 1.0))
 

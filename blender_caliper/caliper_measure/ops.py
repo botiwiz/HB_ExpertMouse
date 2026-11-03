@@ -79,7 +79,7 @@ X/Y/Z: lock to an axis (Shift+X/Y/Z: lock to the plane)"""
             exclude = [(self.index, 'START'), (self.index, 'END')] if self.which == 'BOTH' else \
                 [(self.index, self.which)]
             self.snaps = geom.SnapTargets(context, exclude)
-        radius = context.scene.caliper.snap_radius * context.preferences.system.ui_scale
+        radius = context.scene.caliper.snap_radius * geom.ui_scale(context)
         hit = self.snaps.nearest(self.region, self.rv3d, mouse, radius)
         if hit:
             return hit
@@ -148,7 +148,6 @@ X/Y/Z: lock to an axis (Shift+X/Y/Z: lock to the plane)"""
             m = settings.measures[self.index]
             self.orig = (Vector(m.start), Vector(m.end))
             if self.which == 'BOTH':
-                origin, direction = geom.mouse_ray(self.region, self.rv3d, mouse)
                 self.grab_co = geom.on_view_plane(self.region, self.rv3d, mouse,
                                                   (self.orig[0] + self.orig[1]) / 2)
                 self.anchor = self.grab_co.copy()
