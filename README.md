@@ -1,4 +1,4 @@
-# HB ExpertMouse
+# HB Miscellaneous small apps and extensions
 
 A tiny, portable button remapper for the Kensington Expert Mouse trackball (M01496) on Windows.
 
