@@ -1,0 +1,14 @@
+schema_version = "1.0.0"
+
+id = "caliper_measure"
+version = "1.0.0"
+name = "Caliper Measure"
+tagline = "Measurements that stay visible in every mode, with snapping"
+maintainer = "HB"
+type = "add-on"
+
+tags = ["3D View", "Modeling"]
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-2.0-or-later"]
