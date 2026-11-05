@@ -73,14 +73,23 @@ def grid_frame(context, rv3d):
     return base, (local.x, local.y)
 
 
-def grid_step(context, rv3d):
+def grid_step(context, rv3d, density=None):
     s = context.scene.hb_workplane
     if s.spacing_mode == 'FIXED':
         return s.spacing
+    if density is None:
+        density = s.grid_density
     us = context.scene.unit_settings
     scale = us.scale_length if us.system != 'NONE' else 1.0
-    raw = max(rv3d.view_distance, 1e-6) / 8.0 * scale
+    raw = max(rv3d.view_distance, 1e-6) / (8.0 * density) * scale
     return plane.nice_step(raw) / scale
+
+
+def grid_line_count(context, rv3d, step):
+    """Lines per side so the grid covers the same area whatever the density."""
+    s = context.scene.hb_workplane
+    base = grid_step(context, rv3d, density=1.0)
+    return max(4, min(400, int(round(s.grid_lines * base / step))))
 
 
 def draw_view(context=None, region=None, rv3d=None):
@@ -99,7 +108,8 @@ def draw_view(context=None, region=None, rv3d=None):
         return
     m, center = grid_frame(context, rv3d)
     step = grid_step(context, rv3d)
-    pos, col = grid_geometry(m, center, step, s.grid_lines, s.grid_opacity, tuple(s.grid_color))
+    pos, col = grid_geometry(m, center, step, grid_line_count(context, rv3d, step),
+                             s.grid_opacity, tuple(s.grid_color))
 
     shader = gpu.shader.from_builtin('POLYLINE_SMOOTH_COLOR')
     batch = batch_for_shader(shader, 'LINES', {"pos": pos.astype(np.float32).tolist(),

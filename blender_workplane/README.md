@@ -25,7 +25,7 @@ While moving (G) or extruding (E) in Object Mode or Mesh Edit Mode:
   extruded faces grow in whole grid steps along the normal
 - **Ctrl**: snap off while held · **X / Y**: lock to the workplane's X / Y axis · **Z**: along the normal
   (press again to unlock) · **LMB / Enter**: confirm · **RMB / Esc**: cancel
-- Spacing: *Adaptive* (follows the zoom, same as the drawn grid) or *Fixed* (e.g. 10 mm);
+- Spacing: *Adaptive* (follows the zoom, same as the drawn grid; *Density* in the Grid panel makes it finer or coarser) or *Fixed* (e.g. 10 mm);
   *Snap Subdivisions* snaps to fractions of a grid square
 - With Grid Snap off, G uses Blender's own move constrained to the plane (X/Y/Z work as usual);
   other modes (curves, armatures…) always use that

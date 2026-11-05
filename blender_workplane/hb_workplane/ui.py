@@ -72,6 +72,9 @@ class VIEW3D_PT_hb_workplane_grid(bpy.types.Panel):
         layout.prop(s, "show_auto_grid")
         layout.prop(s, "grid_opacity", slider=True)
         layout.prop(s, "grid_lines")
+        row = layout.row()
+        row.active = s.spacing_mode == 'ADAPTIVE'
+        row.prop(s, "grid_density", slider=True)
         layout.prop(s, "grid_color")
         layout.prop(s, "occlude")
 

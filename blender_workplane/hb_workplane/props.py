@@ -56,6 +56,9 @@ class HBWorkplaneSettings(PropertyGroup):
                                 update=_redraw)
     grid_lines: IntProperty(name="Grid Size", description="Grid lines on each side of the center",
                             min=4, max=100, default=20, update=_redraw)
+    grid_density: FloatProperty(name="Density", min=0.25, max=4.0, default=1.0, update=_redraw,
+                                description="How closely spaced the grid lines are (Adaptive spacing). "
+                                            "Snapping follows the drawn grid")
     grid_color: FloatVectorProperty(name="Grid Color", subtype='COLOR', size=3, min=0, max=1,
                                     default=(0.85, 0.85, 0.85), update=_redraw)
     occlude: BoolProperty(name="Hide Behind Geometry", default=False, update=_redraw)
