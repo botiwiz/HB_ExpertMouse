@@ -31,19 +31,30 @@ Edit > Preferences > Get Extensions > ⌄ (top right) > **Install from Disk…**
      (MESHmachine's Change Width)
 
 ## Boolean Bevel
-Edge menu / right-click menu > **Boolean Bevel**, with the boolean's intersection loop selected
-(edges). MESHmachine's chamfer workflow as one step:
+Select the boolean's intersection loop (edges), then either
+- use the **Boolean Bevel** tool in the Edit Mode toolbar (next to Bevel): its settings are in the
+  **Tool Settings** bar (Width, Segments, Shape, Fill, ⚙ for the rest); **drag** in the viewport to
+  bevel — clicks still select; or
+- Edge menu / right-click menu > **Boolean Bevel** (right-click it > *Assign Shortcut* or
+  *Add to Quick Favorites* to put it on a key or the Q menu).
 
-1. **Boolean Cleanup** – loop vertices the boolean added mid-face (no edge on the kept side) are
-   merged into their closest loop neighbour, closest first, and it **stops automatically** once the
-   remaining gaps are longer than *Merge Distance* (× width). *Keep Side* Auto keeps the side most
-   loop vertices belong to (usually the cutter).
+It's interactive like Ctrl+B: **move the mouse** to set the width (live preview, **Shift** for
+precision), **mouse wheel** for segments, **click / Enter** to confirm, **right-click / Esc** to
+cancel. It starts from the last used settings (Width 0 = a quarter of the loop's average edge, so it
+fits the model's scale) and the redo panel stays available afterwards.
+
+What it does — MESHmachine's chamfer workflow as one step:
+1. **Boolean Cleanup** – loop vertices the boolean added mid-face are merged into their closest
+   loop neighbour, closest first, **stopping automatically** once the remaining gaps are longer than
+   *Merge Distance* (× width). *Keep Side* Auto keeps the side most loop vertices belong to.
 2. **Offset** – a support loop on both sides (*Offset* × width away), straight across the surface
-   (or along existing edges with *Loop Slide*), so the bevel gets a clean strip of quads.
-3. **Offset cleanup** – existing vertices left inside the new strip or on top of the support loop
-   are pushed just outside it, slivers lying along the loop are dissolved, and faces that would
-   fold are merged into their neighbour (MESHmachine's Merge Perimeter idea).
-4. **Bevel** the loop (*Width*, *Segments*, *Shape*), then **Fix Bevel Overlap** on the result.
+   (or along existing edges with *Loop Slide*): a clean strip of quads for the bevel.
+3. **Offset cleanup** – old vertices left inside the strip or on a support loop are pushed just
+   outside it, slivers along the loop are dissolved, faces that would fold are merged.
+4. **Bevel**, then **Fix Bevel Overlap** on it.
+5. **Fill N-gons** around it: *Quads* splits faces with extra vertices along one side straight
+   across (the cut carries on for up to *Cut Reach* faces), then triangulates what's left and joins
+   the triangles back into quads where the shapes allow; *Triangles*; or *Off*.
 
 ![boolean union, then Boolean Bevel](boolean_bevel.png)
 
