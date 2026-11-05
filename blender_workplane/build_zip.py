@@ -1,10 +1,10 @@
-"""Package the extension into hb_caliper.zip (install via Blender: Edit > Preferences > Get Extensions > Install from Disk)."""
+"""Package the extension into hb_workplane.zip (install via Blender: Edit > Preferences > Get Extensions > Install from Disk)."""
 import os
 import zipfile
 
 here = os.path.dirname(os.path.abspath(__file__))
-src = os.path.join(here, "hb_caliper")
-out = os.path.join(here, "hb_caliper.zip")
+src = os.path.join(here, "hb_workplane")
+out = os.path.join(here, "hb_workplane.zip")
 
 with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
     for root, _dirs, files in os.walk(src):

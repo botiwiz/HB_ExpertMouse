@@ -20,7 +20,7 @@ class HBWorkplaneSettings(PropertyGroup):
         ('CUSTOM', "Custom", "Plane set from a selection, face under the mouse or the 3D cursor"),
     ), default='AUTO', update=_redraw)
     matrix: FloatVectorProperty(name="Workplane Matrix", size=(4, 4), subtype='MATRIX',
-                                default=[v for row in Matrix.Identity(4) for v in row], update=_redraw)
+                                default=((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1)), update=_redraw)
 
     axis_bias: FloatProperty(name="Ground Bias", min=0.0, max=1.0, default=0.7, update=_redraw,
                              description="Automatic mode: how strongly the ground (XY) plane is preferred")
