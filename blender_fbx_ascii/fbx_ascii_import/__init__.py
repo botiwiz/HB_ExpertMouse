@@ -10,7 +10,7 @@ import option works exactly as in the normal FBX importer.
 
 bl_info = {
     "name": "ASCII FBX Importer",
-    "author": "HB",
+    "author": "Boti Harko",
     "version": (1, 0, 0),
     "blender": (4, 2, 0),
     "location": "File > Import > FBX (ASCII + Binary)",

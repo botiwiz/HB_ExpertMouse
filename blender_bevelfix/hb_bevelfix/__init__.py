@@ -7,7 +7,7 @@ neighbouring edge, by edge-sliding only the affected vertices to smoothed offset
 
 bl_info = {
     "name": "HB_BevelFix",
-    "author": "HB",
+    "author": "Boti Harko",
     "version": (1, 0, 0),
     "blender": (4, 2, 0),
     "location": "Edit Mode > Edge menu / right-click menu > Fix Bevel Overlap (Ctrl+Alt+B)",

@@ -7,7 +7,7 @@ are then constrained to it. Without a custom plane, the world plane facing the v
 
 bl_info = {
     "name": "HB_Workplane",
-    "author": "HB",
+    "author": "Boti Harko",
     "version": (1, 0, 0),
     "blender": (4, 2, 0),
     "location": "3D View > Space (set workplane), Sidebar > HB_Workplane",

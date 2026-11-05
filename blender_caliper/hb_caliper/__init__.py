@@ -6,7 +6,7 @@ with draggable handles, Ctrl snapping and X/Y/Z axis locking.
 
 bl_info = {
     "name": "HB_Caliper",
-    "author": "HB",
+    "author": "Boti Harko",
     "version": (1, 0, 0),
     "blender": (4, 2, 0),
     "location": "3D View > Toolbar (bottom) > HB_Caliper, Sidebar > HB_Caliper",

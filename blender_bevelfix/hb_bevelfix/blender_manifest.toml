@@ -4,7 +4,7 @@ id = "hb_bevelfix"
 version = "1.0.0"
 name = "HB_BevelFix"
 tagline = "Fix overlapping bevels by sliding only the affected vertices"
-maintainer = "HB"
+maintainer = "Boti Harko"
 type = "add-on"
 
 tags = ["Mesh", "Modeling"]

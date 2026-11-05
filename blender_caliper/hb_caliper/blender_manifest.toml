@@ -4,7 +4,7 @@ id = "hb_caliper"
 version = "1.0.0"
 name = "HB_Caliper"
 tagline = "Measurements that stay visible in every mode, with snapping"
-maintainer = "HB"
+maintainer = "Boti Harko"
 type = "add-on"
 
 tags = ["3D View", "Modeling"]
