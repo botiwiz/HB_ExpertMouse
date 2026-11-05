@@ -12,6 +12,7 @@ of their neighbours (iterated, the healthy ones stay fixed), clamped inside the 
 The inner profile vertices are re-mapped so the profile keeps its shape.
 """
 
+import bmesh
 from mathutils import Vector
 from mathutils.geometry import intersect_line_line, intersect_line_plane
 
@@ -19,7 +20,7 @@ MAX_SEGMENTS = 128
 
 
 class Section:
-    __slots__ = ("verts", "o", "rails", "s", "L", "ok", "free", "nbrs", "key")
+    __slots__ = ("verts", "o", "rails", "s", "L", "ok", "free", "ends", "nbrs", "key")
 
     def __init__(self, verts):
         self.verts = verts               # [c0, ..., ck]
@@ -29,6 +30,7 @@ class Section:
         self.L = [0.0, 0.0]              # rail length from o to its far vertex, per side
         self.ok = [False, False]
         self.free = [False, False]       # no edge leads back to the corner: slide on the surface
+        self.ends = [None, None]         # far vertex of each side's rail
         self.nbrs = []                   # (other section, same_orientation)
         self.key = tuple(sorted((verts[0].index, verts[-1].index)))
 
@@ -158,6 +160,7 @@ def _set_corner(sec, cand):
         sec.L[side] = ra.length
         sec.s[side] = (c.co - o).dot(d)
         sec.ok[side] = True
+        sec.ends[side] = a
 
 
 def _nbr_slide(sec, side):
@@ -259,11 +262,22 @@ def _side_of(nbr_same, side):
     return side if nbr_same else 1 - side
 
 
-def fix(bm, tolerance=0.35, clamp=0.85, blend=1, iterations=60, fix_all=False):
-    """Fix the selected bevel. Returns (sections, affected sides, moved vertices)."""
+def _weldable(sec, side, bevel_verts):
+    """The rail's far vertex may be merged into the bevel vertex (weld mode)."""
+    a = sec.ends[side]
+    return (a is not None and not sec.free[side] and a.is_valid and not a.select
+            and a not in bevel_verts)
+
+
+def fix(bm, tolerance=0.35, clamp=0.85, blend=1, iterations=60, fix_all=False, weld=False):
+    """Fix the selected bevel. Returns (sections, affected sides, moved vertices, welded vertices).
+
+    weld: where a vertex's rail is too short for the smoothed slide, merge the conflicting
+    vertex at the rail's far end into it instead of squeezing the bevel (like MESHmachine's
+    Boolean Cleanup merges the vertices on one side of a seam)."""
     sections = build_sections(bm)
     if not sections:
-        return 0, 0, 0
+        return 0, 0, 0, 0
 
     def nbr_values(sec, side):
         return [n.s[_side_of(same, side)] for n, same in sec.nbrs if n.ok[_side_of(same, side)]]
@@ -298,7 +312,13 @@ def fix(bm, tolerance=0.35, clamp=0.85, blend=1, iterations=60, fix_all=False):
         affected |= grow
         frontier = grow
     if not affected:
-        return len(sections), 0, 0
+        return len(sections), 0, 0, 0
+    bevel_verts = {v for sec in sections for v in sec.verts}
+    cap = {}
+    for sid, side in affected:
+        sec = by_id[sid]
+        can_weld = weld and _weldable(sec, side, bevel_verts)
+        cap[(sid, side)] = float("inf") if can_weld else clamp * sec.L[side]
 
     # 3) smooth the slides of affected sides (healthy ones stay fixed)
     new_s = {k: by_id[k[0]].s[k[1]] for k in affected}
@@ -315,7 +335,18 @@ def fix(bm, tolerance=0.35, clamp=0.85, blend=1, iterations=60, fix_all=False):
                 target = sec.s[side]
             else:
                 target = sum(vals) / len(vals)
-            new_s[(sid, side)] = max(1e-6, min(target, clamp * sec.L[side]))
+            new_s[(sid, side)] = max(1e-6, min(target, cap[(sid, side)]))
+
+    # Welds: sides that now reach past (or too close to) their rail's far vertex.
+    welds = {}
+    for (sid, side), sv in new_s.items():
+        sec = by_id[sid]
+        if cap[(sid, side)] == float("inf") and sv > clamp * sec.L[side]:
+            a = sec.ends[side]
+            if a in welds:  # already merged into another bevel vertex: just slide this one
+                new_s[(sid, side)] = min(sv, clamp * sec.L[side])
+                continue
+            welds[a] = sec.verts[0] if side == 0 else sec.verts[-1]
 
     # 4) apply: slide outer vertices, re-map the profile in between
     moved = 0
@@ -358,4 +389,15 @@ def fix(bm, tolerance=0.35, clamp=0.85, blend=1, iterations=60, fix_all=False):
             if (co - v.co).length > 1e-9:
                 v.co = co
                 moved += 1
-    return len(sections), len(affected), moved
+
+    welded = 0
+    if welds:
+        targets = set(welds.values())
+        bmesh.ops.weld_verts(bm, targetmap=welds)
+        welded = len(welds)
+        # Clean up faces/edges that collapsed around the merged vertices.
+        near = {e for v in targets if v.is_valid for e in v.link_edges}
+        if near:
+            size = max((e.calc_length() for e in near), default=1.0)
+            bmesh.ops.dissolve_degenerate(bm, dist=size * 1e-4, edges=list(near))
+    return len(sections), len(affected), moved, welded

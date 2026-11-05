@@ -19,7 +19,7 @@ import bmesh
 import bpy
 from bpy.props import BoolProperty, FloatProperty, IntProperty
 
-from . import fix
+from . import fix, loopselect
 
 _keymaps = []
 
@@ -40,42 +40,54 @@ are edge-slid to a smoothed value; the rest of the bevel is left untouched"""
                        description="Also smooth this many neighbouring vertices for a gradual transition")
     fix_all: BoolProperty(name="Smooth Whole Bevel", default=False,
                           description="Smooth the slide of every bevel vertex, not only the broken ones")
+    weld: BoolProperty(name="Weld Conflicts", default=False,
+                       description="Aggressive: where an edge is too short for the bevel, merge the vertex at its "
+                                   "far end into the bevel vertex instead of squeezing the bevel")
 
     @classmethod
     def poll(cls, context):
         return context.mode == 'EDIT_MESH'
 
     def execute(self, context):
-        total_sec = total_aff = total_moved = 0
+        total_sec = total_aff = total_moved = total_weld = 0
         for obj in context.objects_in_mode:
             if obj.type != 'MESH':
                 continue
             bm = bmesh.from_edit_mesh(obj.data)
             bm.verts.index_update()
-            n_sec, n_aff, n_moved = fix.fix(bm, tolerance=self.tolerance, clamp=self.clamp,
-                                           blend=self.blend, fix_all=self.fix_all)
+            n_sec, n_aff, n_moved, n_weld = fix.fix(bm, tolerance=self.tolerance, clamp=self.clamp,
+                                                   blend=self.blend, fix_all=self.fix_all, weld=self.weld)
+            total_weld += n_weld
             total_sec += n_sec
             total_aff += n_aff
             total_moved += n_moved
-            if n_moved:
+            if n_moved or n_weld:
                 bm.normal_update()
                 bmesh.update_edit_mesh(obj.data)
         if not total_sec:
             self.report({'WARNING'}, "No bevel found: select the bevel's faces (a bevel leaves them selected)")
             return {'CANCELLED'}
-        if not total_moved:
+        if not total_moved and not total_weld:
             self.report({'INFO'}, "No overlaps found in %d bevel sections" % total_sec)
             return {'FINISHED'}
-        self.report({'INFO'}, "Fixed %d bevel sides (%d vertices moved)" % (total_aff, total_moved))
+        self.report({'INFO'}, "Fixed %d bevel sides (%d vertices moved, %d welded)"
+                    % (total_aff, total_moved, total_weld))
         return {'FINISHED'}
 
 
 def menu_func(self, context):
     self.layout.operator(MESH_OT_hb_bevel_fix.bl_idname, icon='MOD_BEVEL')
+    self.layout.operator(loopselect.MESH_OT_hb_select_loop.bl_idname, icon='EDGESEL')
+
+
+def select_menu_func(self, context):
+    self.layout.operator(loopselect.MESH_OT_hb_select_loop.bl_idname, icon='EDGESEL')
 
 
 def register():
     bpy.utils.register_class(MESH_OT_hb_bevel_fix)
+    loopselect.register()
+    bpy.types.VIEW3D_MT_select_edit_mesh.append(select_menu_func)
     bpy.types.VIEW3D_MT_edit_mesh_edges.append(menu_func)
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.append(menu_func)
     kc = bpy.context.window_manager.keyconfigs.addon
@@ -94,4 +106,6 @@ def unregister():
     _keymaps.clear()
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(menu_func)
     bpy.types.VIEW3D_MT_edit_mesh_edges.remove(menu_func)
+    bpy.types.VIEW3D_MT_select_edit_mesh.remove(select_menu_func)
+    loopselect.unregister()
     bpy.utils.unregister_class(MESH_OT_hb_bevel_fix)

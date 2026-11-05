@@ -4,7 +4,8 @@ Fixes bevels that overlap / fold where the bevel width is bigger than a neighbou
 edge, by **edge-sliding only the affected vertices** to a smoothed value — unlike
 *Clamp Overlap*, which shrinks the whole bevel.
 
-![before / after](preview.png)
+![before / slide fix / weld fix](preview.png)
+*Left to right: overlapping bevel, Fix (slide), Fix with Weld Conflicts.*
 
 ## Install (Blender 4.2+)
 Edit > Preferences > Get Extensions > ⌄ (top right) > **Install from Disk…** > `hb_bevelfix.zip`.
@@ -18,6 +19,18 @@ Edit > Preferences > Get Extensions > ⌄ (top right) > **Install from Disk…**
    - **Tolerance** – how different a vertex's slide may be from its neighbours before it's fixed
    - **Blend** – also ease this many neighbouring vertices for a gradual transition
    - **Smooth Whole Bevel** – smooth every vertex's slide, not only the broken ones
+   - **Weld Conflicts** (aggressive) – where an edge is too short for the bevel, the vertex at its
+     far end is merged into the bevel vertex, so the bevel keeps its full, smooth width instead of
+     being squeezed (the idea of MESHmachine's Boolean Cleanup, which merges the vertices on one
+     side of a seam into the other)
+
+## Select Loop (Angle)
+Select > **Select Loop (Angle)** (also in the Edge and right-click menus). Grows edge loops from
+the selected edge(s) in the direction they point: at each vertex it continues along the edge that
+turns least, up to **Max Angle** (raise it to follow tighter curves). Unlike Blender's loop select
+it doesn't need quad topology — handy for picking an edge loop to bevel on messy boolean meshes.
+If every selected edge is marked sharp, it selects all connected sharp edges instead
+(**Connected Sharps** option). Modelled on MESHmachine's LSelect / Select tools.
 
 Tip: you can still adjust the bevel's own redo panel first — run the fix once you're happy
 with the width, since running it ends the bevel's redo.
