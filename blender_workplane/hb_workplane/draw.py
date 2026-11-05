@@ -47,9 +47,9 @@ def grid_geometry(base, center, step, n, opacity, color):
                 continue  # axis line, drawn below
             a = opacity * (1.7 if k % 10 == 0 else 1.0)
             if horizontal:
-                add_line(np.array([cx - extent, u, 0.0]), np.array([cx + extent, u, 0.0]), color, a, extent)
+                add_line(np.array([cx - extent, u, 0.0]), np.array([cx + extent, u, 0.0]), color, a, extent + step)
             else:
-                add_line(np.array([u, cy - extent, 0.0]), np.array([u, cy + extent, 0.0]), color, a, extent)
+                add_line(np.array([u, cy - extent, 0.0]), np.array([u, cy + extent, 0.0]), color, a, extent + step)
 
     e = extent * 1.5
     axis_a = min(1.0, opacity * 2.5)
@@ -89,7 +89,7 @@ def grid_line_count(context, rv3d, step):
     """Lines per side so the grid covers the same area whatever the density."""
     s = context.scene.hb_workplane
     base = grid_step(context, rv3d, density=1.0)
-    return max(4, min(400, int(round(s.grid_lines * base / step))))
+    return max(1, min(400, int(round(s.grid_lines * base / step))))
 
 
 def draw_view(context=None, region=None, rv3d=None):
