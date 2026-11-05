@@ -443,7 +443,9 @@ void MainWindow::browserPopup(const QPoint& global, const KFileItemList& items,
     menu->setAttribute(Qt::WA_DeleteOnClose);
     menu->idOf = [this](QAction* a) { return commandIdFor(a); };
     menu->toggle = [this](QAction*, const QString& id) { toggleFavorite(id); };
-    bool isBackground = flags & KParts::NavigationExtension::ShowNavigationItems;
+    // right-click on empty space: Dolphin passes the folder itself as the only item
+    bool isBackground = items.isEmpty() || (items.size() == 1 && part_ &&
+        items.first().url().adjusted(QUrl::StripTrailingSlash) == part_->url().adjusted(QUrl::StripTrailingSlash));
 
     if (items.size() == 1 && items.first().isLocalFile() && !items.first().isDir() && viewable(items.first().localPath())) {
         QString p = items.first().localPath();
