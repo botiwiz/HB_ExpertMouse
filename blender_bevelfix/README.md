@@ -73,16 +73,23 @@ Same idea as MESHmachine's Turn Corner (split the corner's outer vertex along it
 edges, rebuild the faces around it, merge the two inner vertices where their edges meet), written
 from scratch. Works on single-segment chamfers; multi-segment corner patches aren't handled.
 
-## Select Loop (Angle)
-Select > **Select Loop (Angle)** (also in the Edge and right-click menus). Grows edge loops from
-the selected edge(s) in the direction they point: at each vertex it continues along the edge that
-turns least, up to **Max Angle** (raise it to follow tighter curves). Unlike Blender's loop select
-it doesn't need quad topology — handy for picking an edge loop to bevel on messy boolean meshes.
-If every selected edge is marked sharp, it selects all connected sharp edges instead
-(**Connected Sharps** option). Modelled on MESHmachine's LSelect / Select tools.
+## Select (Alt + click) — LSelect / SSelect / VSelect
+Works like MESHmachine's Select: on Blender's loop-select key (**Alt + click**) it first looks at
+what's already selected:
+- **Edge mode**, isolated edges selected (edges not touching other selected edges): if any is smooth
+  → **LSelect**, else (all sharp) → **SSelect**. The redo panel toggles *Loop / Sharp* and sets
+  *Min Angle* (default 60; higher grows the loop).
+- **Face mode**, exactly 2 neighbouring faces selected → the face loop through them.
+- **Vertex mode**, the mesh has vertex groups and vertices are selected → **VSelect**: mouse wheel
+  cycles the groups of the selection, **S** toggles one, **A** toggles all, click selects
+  (with a single group it selects it right away).
+- Otherwise the click goes through to **Blender's own loop select** as usual.
 
-Tip: you can still adjust the bevel's own redo panel first — run the fix once you're happy
-with the width, since running it ends the bevel's redo.
+**LSelect** walks from each edge in both directions, always taking the next edge that continues
+the current one most straightly, while the angle between them stays above 180° − *Min Angle* —
+no quad topology needed. **SSelect** selects all sharp edges connected to the selection.
+Preferences: *Select on Alt + Click* (on/off) and *Always Loop Select* (loop select even when only
+sharp edges are selected). All four are also in Select > **HB Select**.
 
 ## How it works
 The selected bevel is read as slices across the strip. For each slice the two edges the

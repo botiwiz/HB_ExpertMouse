@@ -106,16 +106,62 @@ are edge-slid to a smoothed value; the rest of the bevel is left untouched"""
 
 def menu_func(self, context):
     self.layout.operator(MESH_OT_hb_bevel_fix.bl_idname, icon='MOD_BEVEL')
-    self.layout.operator(loopselect.MESH_OT_hb_select_loop.bl_idname, icon='EDGESEL')
+    self.layout.operator(loopselect.MESH_OT_hb_lselect.bl_idname, icon='EDGESEL')
     self.layout.operator(turncorner.MESH_OT_hb_turn_corner.bl_idname, icon='MOD_BEVEL')
     self.layout.operator(boolbevel.MESH_OT_hb_boolean_bevel.bl_idname, icon='MOD_BOOLEAN')
 
 
 def select_menu_func(self, context):
-    self.layout.operator(loopselect.MESH_OT_hb_select_loop.bl_idname, icon='EDGESEL')
+    self.layout.menu("VIEW3D_MT_hb_select", icon='EDGESEL')
+
+
+def _update_select_key(self, context):
+    _unregister_select_key()
+    _register_select_key()
+
+
+class HBBevelFixPreferences(bpy.types.AddonPreferences):
+    bl_idname = __package__
+
+    select_key: bpy.props.BoolProperty(
+        name="Select on Alt + Click", default=True, update=_update_select_key,
+        description="Run Select (LSelect / SSelect / VSelect) on Blender's loop-select key; "
+                    "it passes the click on to Blender's loop select when it doesn't apply")
+    always_loop: bpy.props.BoolProperty(
+        name="Always Loop Select", default=False,
+        description="Loop select even when only sharp edges are selected (instead of selecting connected sharps)")
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.prop(self, "select_key")
+        col.prop(self, "always_loop")
+
+
+_select_keymaps = []
+
+
+def _register_select_key():
+    kc = bpy.context.window_manager.keyconfigs.addon
+    addon = bpy.context.preferences.addons.get(__package__)
+    if not kc or (addon and not addon.preferences.select_key):
+        return
+    key, value = loopselect.loop_select_keymap_event()
+    km = kc.keymaps.new(name="Mesh", space_type='EMPTY')
+    kmi = km.keymap_items.new(loopselect.MESH_OT_hb_select.bl_idname, key, value, alt=True)
+    _select_keymaps.append((km, kmi))
+
+
+def _unregister_select_key():
+    for km, kmi in _select_keymaps:
+        try:
+            km.keymap_items.remove(kmi)
+        except (ReferenceError, RuntimeError):
+            pass
+    _select_keymaps.clear()
 
 
 def register():
+    bpy.utils.register_class(HBBevelFixPreferences)
     bpy.utils.register_class(MESH_OT_hb_bevel_fix)
     loopselect.register()
     turncorner.register()
@@ -128,9 +174,11 @@ def register():
         km = kc.keymaps.new(name="Mesh", space_type='EMPTY')
         kmi = km.keymap_items.new(MESH_OT_hb_bevel_fix.bl_idname, 'B', 'PRESS', ctrl=True, alt=True)
         _keymaps.append((km, kmi))
+    _register_select_key()
 
 
 def unregister():
+    _unregister_select_key()
     for km, kmi in _keymaps:
         try:
             km.keymap_items.remove(kmi)
@@ -144,3 +192,4 @@ def unregister():
     turncorner.unregister()
     loopselect.unregister()
     bpy.utils.unregister_class(MESH_OT_hb_bevel_fix)
+    bpy.utils.unregister_class(HBBevelFixPreferences)
