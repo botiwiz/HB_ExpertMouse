@@ -40,6 +40,16 @@ are edge-slid to a smoothed value; the rest of the bevel is left untouched"""
                        description="Also smooth this many neighbouring vertices for a gradual transition")
     fix_all: BoolProperty(name="Smooth Whole Bevel", default=False,
                           description="Smooth the slide of every bevel vertex, not only the broken ones")
+    width: FloatProperty(name="Width", default=0.0, subtype='DISTANCE', unit='LENGTH', step=0.1,
+                         description="Widen (or narrow) the whole bevel by sliding along its edges "
+                                     "(like MESHmachine's Change Width)")
+    taper: BoolProperty(name="Taper", default=False,
+                        description="Ramp the width change from nothing at one end of an open bevel to full at the other")
+    taper_flip: BoolProperty(name="Flip", default=False, description="Taper from the other end")
+    merge_threshold: FloatProperty(name="Merge Threshold", default=0.0, min=0.0, subtype='DISTANCE',
+                                   unit='LENGTH', step=0.01,
+                                   description="Collapse neighbouring bevel slices closer than this, removing "
+                                               "sliver faces (like MESHmachine's Boolean Cleanup)")
     weld: BoolProperty(name="Weld Conflicts", default=False,
                        description="Aggressive: where an edge is too short for the bevel, merge the vertex at its "
                                    "far end into the bevel vertex instead of squeezing the bevel")
@@ -49,30 +59,49 @@ are edge-slid to a smoothed value; the rest of the bevel is left untouched"""
         return context.mode == 'EDIT_MESH'
 
     def execute(self, context):
-        total_sec = total_aff = total_moved = total_weld = 0
+        totals = dict(sections=0, affected=0, moved=0, welded=0, collapsed=0)
         for obj in context.objects_in_mode:
             if obj.type != 'MESH':
                 continue
             bm = bmesh.from_edit_mesh(obj.data)
             bm.verts.index_update()
-            n_sec, n_aff, n_moved, n_weld = fix.fix(bm, tolerance=self.tolerance, clamp=self.clamp,
-                                                   blend=self.blend, fix_all=self.fix_all, weld=self.weld)
-            total_weld += n_weld
-            total_sec += n_sec
-            total_aff += n_aff
-            total_moved += n_moved
-            if n_moved or n_weld:
+            st = fix.fix(bm, tolerance=self.tolerance, clamp=self.clamp, blend=self.blend,
+                         fix_all=self.fix_all, weld=self.weld, width=self.width, taper=self.taper, taper_flip=self.taper_flip,
+                         merge_threshold=self.merge_threshold)
+            for k in totals:
+                totals[k] += st[k]
+            if st["moved"] or st["welded"] or st["collapsed"]:
                 bm.normal_update()
                 bmesh.update_edit_mesh(obj.data)
-        if not total_sec:
+        if not totals["sections"]:
             self.report({'WARNING'}, "No bevel found: select the bevel's faces (a bevel leaves them selected)")
             return {'CANCELLED'}
-        if not total_moved and not total_weld:
-            self.report({'INFO'}, "No overlaps found in %d bevel sections" % total_sec)
+        if not (totals["moved"] or totals["welded"] or totals["collapsed"]):
+            self.report({'INFO'}, "No overlaps found in %d bevel slices" % totals["sections"])
             return {'FINISHED'}
-        self.report({'INFO'}, "Fixed %d bevel sides (%d vertices moved, %d welded)"
-                    % (total_aff, total_moved, total_weld))
+        self.report({'INFO'}, "Fixed %(affected)d bevel sides: %(moved)d vertices moved, "
+                              "%(welded)d welded, %(collapsed)d slices merged" % totals)
         return {'FINISHED'}
+
+    def draw(self, context):
+        layout = self.layout
+        layout.use_property_split = True
+        col = layout.column()
+        col.prop(self, "clamp")
+        col.prop(self, "tolerance")
+        col.prop(self, "blend")
+        col.prop(self, "fix_all")
+        col.separator()
+        col.prop(self, "weld")
+        col.prop(self, "merge_threshold")
+        col.separator()
+        col.prop(self, "width")
+        row = col.row()
+        row.active = abs(self.width) > 0
+        row.prop(self, "taper")
+        sub = row.row()
+        sub.active = self.taper
+        sub.prop(self, "taper_flip", toggle=True)
 
 
 def menu_func(self, context):

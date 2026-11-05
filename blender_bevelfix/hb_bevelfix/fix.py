@@ -228,6 +228,46 @@ def build_sections(bm):
                 same = (oside == side)
                 if not any(n is osec for n, _ in sec.nbrs):
                     sec.nbrs.append((osec, same))
+    # Open strip ends: the last slice's rungs border only one selected face, so the walk
+    # above can't find it. Step one row of faces outward from its neighbour instead.
+    for sec in list(sections):
+        if len(sec.nbrs) != 1:
+            continue
+        nb = sec.nbrs[0][0]
+        nb_verts = set(nb.verts)
+        row = []
+        for j in range(len(sec.verts) - 1):
+            p, q = sec.verts[j], sec.verts[j + 1]
+            e = p.link_edges and next((x for x in p.link_edges if x.other_vert(p) is q), None)
+            faces = [f for f in (e.link_faces if e else []) if f.select and not (set(f.verts) & nb_verts)]
+            if len(faces) != 1 or len(faces[0].verts) != 4:
+                row = None
+                break
+            fv = list(faces[0].verts)
+            i = fv.index(p)
+            # quad p, q, q', p' (in either winding)
+            if fv[(i + 1) % 4] is q:
+                p2, q2 = fv[(i + 3) % 4], fv[(i + 2) % 4]
+            else:
+                p2, q2 = fv[(i + 1) % 4], fv[(i + 2) % 4]
+            if row and row[-1] is not p2:
+                row = None
+                break
+            if not row:
+                row.append(p2)
+            row.append(q2)
+        if not row or len(row) != len(sec.verts) or row[0] not in boundary or row[-1] not in boundary:
+            continue
+        end = Section(row)
+        if end.key in by_key or row[0] in by_end or row[-1] in by_end:
+            continue
+        by_key[end.key] = end
+        sections.append(end)
+        by_end[row[0]] = (end, 0)
+        by_end[row[-1]] = (end, 1)
+        end.nbrs.append((sec, True))
+        sec.nbrs.append((end, True))
+
     # Recover the original corner of each section and the slide of each side.
     cands = {}
     for sec in sections:
@@ -269,18 +309,155 @@ def _weldable(sec, side, bevel_verts):
             and a not in bevel_verts)
 
 
-def fix(bm, tolerance=0.35, clamp=0.85, blend=1, iterations=60, fix_all=False, weld=False):
-    """Fix the selected bevel. Returns (sections, affected sides, moved vertices, welded vertices).
+def _chain_positions(sections):
+    """0..1 position of each section along its open strip (for tapering); cyclic strips get 1."""
+    pos = {}
+    seen = set()
+    for start in sections:
+        if id(start) in seen:
+            continue
+        # collect the component
+        comp, stack = [], [start]
+        seen.add(id(start))
+        while stack:
+            sec = stack.pop()
+            comp.append(sec)
+            for n, _same in sec.nbrs:
+                if id(n) not in seen:
+                    seen.add(id(n))
+                    stack.append(n)
+        ends = [sec for sec in comp if len(sec.nbrs) <= 1]
+        if not ends:
+            for sec in comp:
+                pos[id(sec)] = 1.0
+            continue
+        dist = {id(ends[0]): 0}
+        queue = [ends[0]]
+        for sec in queue:
+            for n, _same in sec.nbrs:
+                if id(n) not in dist:
+                    dist[id(n)] = dist[id(sec)] + 1
+                    queue.append(n)
+        top = max(dist.values()) or 1
+        for sec in comp:
+            pos[id(sec)] = dist.get(id(sec), 0) / top
+    return pos
 
-    weld: where a vertex's rail is too short for the smoothed slide, merge the conflicting
-    vertex at the rail's far end into it instead of squeezing the bevel (like MESHmachine's
-    Boolean Cleanup merges the vertices on one side of a seam)."""
+
+def _apply_section(sec, new_ends):
+    """Move a section's outer vertices and re-map its profile. Returns moved vertex count."""
+    from mathutils import Matrix
+    o = sec.o
+    old = [v.co.copy() for v in sec.verts]
+    u_old, w_old = old[0] - o, old[-1] - o
+    u_new, w_new = new_ends[0] - o, new_ends[1] - o
+    n_old, n_new = u_old.cross(w_old), u_new.cross(w_new)
+    if n_old.length < 1e-12 or n_new.length < 1e-12:
+        return 0
+    # keep the out-of-plane part of the profile at the same scale relative to the width
+    basis_old = Matrix((u_old, w_old, n_old.normalized() * (old[0] - old[-1]).length)).transposed()
+    basis_new = Matrix((u_new, w_new, n_new.normalized() * (new_ends[0] - new_ends[1]).length)).transposed()
+    try:
+        inv = basis_old.inverted()
+    except ValueError:
+        return 0
+    moved = 0
+    last = len(sec.verts) - 1
+    for i, v in enumerate(sec.verts):
+        co = new_ends[0] if i == 0 else new_ends[1] if i == last else o + basis_new @ (inv @ (old[i] - o))
+        if (co - v.co).length > 1e-9:
+            v.co = co
+            moved += 1
+    return moved
+
+
+def _collapse_thin(bm, sections, threshold):
+    """Merge neighbouring sections whose vertices all lie within `threshold` of each other
+    (removes the sliver faces between them). In the spirit of MESHmachine's Boolean Cleanup,
+    which merges loop vertices into their closest neighbour within a threshold."""
+    parent = {id(s): id(s) for s in sections}
+    by_id = {id(s): s for s in sections}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def aligned(sec, other, same):
+        vs = other.verts if same else list(reversed(other.verts))
+        return vs if len(vs) == len(sec.verts) else None
+
+    for sec in sections:
+        if not all(v.is_valid for v in sec.verts):
+            continue
+        for n, same in sec.nbrs:
+            vs = aligned(sec, n, same)
+            if vs is None or not all(v.is_valid for v in vs):
+                continue
+            if all((a.co - b.co).length <= threshold for a, b in zip(sec.verts, vs)):
+                parent[find(id(sec))] = find(id(n))
+
+    groups = {}
+    for sec in sections:
+        groups.setdefault(find(id(sec)), []).append(sec)
+    targetmap = {}
+    collapsed = 0
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        anchor = members[0]
+        rows = []
+        for sec in members:
+            same = None
+            if sec is anchor:
+                rows.append(sec.verts)
+                continue
+            # orient each member like the anchor (by nearest end)
+            d_same = (sec.verts[0].co - anchor.verts[0].co).length
+            d_flip = (sec.verts[-1].co - anchor.verts[0].co).length
+            rows.append(sec.verts if d_same <= d_flip else list(reversed(sec.verts)))
+        for j in range(len(anchor.verts)):
+            col = [row[j] for row in rows]
+            avg = sum((v.co for v in col), Vector()) / len(col)
+            col[0].co = avg
+            for v in col[1:]:
+                if v is not col[0] and v not in targetmap:
+                    targetmap[v] = col[0]
+        collapsed += len(members) - 1
+    if targetmap:
+        bmesh.ops.weld_verts(bm, targetmap=targetmap)
+    return collapsed
+
+
+def fix(bm, tolerance=0.35, clamp=0.85, blend=1, iterations=60, fix_all=False, weld=False,
+        width=0.0, taper=False, taper_flip=False, merge_threshold=0.0):
+    """Fix the selected bevel.
+
+    weld: where a vertex's rail is too short for its slide, merge the conflicting vertex at
+          the rail's far end into it instead of squeezing the bevel (like MESHmachine's
+          Offset/Chamfer "Merge Perimeter").
+    width: change every slide by this much (like MESHmachine's Change Width); with taper the
+           change ramps from 0 to `width` along an open strip.
+    merge_threshold: collapse neighbouring sections closer than this (like Boolean Cleanup).
+
+    Returns a dict: sections, affected, moved, welded, collapsed."""
+    stats = dict(sections=0, affected=0, moved=0, welded=0, collapsed=0)
     sections = build_sections(bm)
     if not sections:
-        return 0, 0, 0, 0
+        return stats
+    stats["sections"] = len(sections)
+    by_id = {id(s): s for s in sections}
+    bevel_verts = {v for sec in sections for v in sec.verts}
 
     def nbr_values(sec, side):
         return [n.s[_side_of(same, side)] for n, same in sec.nbrs if n.ok[_side_of(same, side)]]
+
+    def cap_for(sid, side):
+        sec = by_id[sid]
+        if weld and _weldable(sec, side, bevel_verts):
+            return float("inf")
+        return clamp * sec.L[side]
 
     # 1) detect affected sides
     affected = set()
@@ -300,7 +477,6 @@ def fix(bm, tolerance=0.35, clamp=0.85, blend=1, iterations=60, fix_all=False, w
                 affected.add((id(sec), side))
 
     # 2) blend into the surroundings
-    by_id = {id(s): s for s in sections}
     frontier = set(affected)
     for _ in range(max(0, blend)):
         grow = set()
@@ -311,33 +487,35 @@ def fix(bm, tolerance=0.35, clamp=0.85, blend=1, iterations=60, fix_all=False, w
                     grow.add(key)
         affected |= grow
         frontier = grow
-    if not affected:
-        return len(sections), 0, 0, 0
-    bevel_verts = {v for sec in sections for v in sec.verts}
-    cap = {}
-    for sid, side in affected:
-        sec = by_id[sid]
-        can_weld = weld and _weldable(sec, side, bevel_verts)
-        cap[(sid, side)] = float("inf") if can_weld else clamp * sec.L[side]
+    stats["affected"] = len(affected)
 
     # 3) smooth the slides of affected sides (healthy ones stay fixed)
     new_s = {k: by_id[k[0]].s[k[1]] for k in affected}
-    for _ in range(iterations):
+    cap = {k: cap_for(*k) for k in affected}
+    for _ in range(iterations if affected else 0):
         for (sid, side) in affected:
             sec = by_id[sid]
-            vals = []
-            for n, same in sec.nbrs:
-                ns = _side_of(same, side)
-                if not n.ok[ns]:
-                    continue
-                vals.append(new_s.get((id(n), ns), n.s[ns]))
-            if not vals:  # isolated: just pull inside the rail
-                target = sec.s[side]
-            else:
-                target = sum(vals) / len(vals)
+            vals = [new_s.get((id(n), _side_of(same, side)), n.s[_side_of(same, side)])
+                    for n, same in sec.nbrs if n.ok[_side_of(same, side)]]
+            target = sum(vals) / len(vals) if vals else sec.s[side]
             new_s[(sid, side)] = max(1e-6, min(target, cap[(sid, side)]))
 
-    # Welds: sides that now reach past (or too close to) their rail's far vertex.
+    # 3b) change the width of the whole bevel (optionally tapered along the strip)
+    if abs(width) > 1e-12:
+        pos = _chain_positions(sections) if taper else {}
+        for sec in sections:
+            for side in (0, 1):
+                if not sec.ok[side]:
+                    continue
+                key = (id(sec), side)
+                f = pos.get(id(sec), 1.0) if taper else 1.0
+                if taper and taper_flip:
+                    f = 1.0 - f
+                base = new_s.get(key, sec.s[side])
+                cap.setdefault(key, cap_for(*key))
+                new_s[key] = max(1e-6, min(base + width * f, cap[key]))
+
+    # 4) welds: sides that now reach past their rail's far vertex
     welds = {}
     for (sid, side), sv in new_s.items():
         sec = by_id[sid]
@@ -348,56 +526,23 @@ def fix(bm, tolerance=0.35, clamp=0.85, blend=1, iterations=60, fix_all=False, w
                 continue
             welds[a] = sec.verts[0] if side == 0 else sec.verts[-1]
 
-    # 4) apply: slide outer vertices, re-map the profile in between
-    moved = 0
-    touched = {sid for sid, _ in affected}
-    for sid in touched:
+    # 5) apply: slide outer vertices, re-map the profile in between
+    for sid in {sid for sid, _ in new_s}:
         sec = by_id[sid]
-        o = sec.o
-        old = [v.co.copy() for v in sec.verts]
-        new_ends = []
-        for side, c_old in ((0, old[0]), (1, old[-1])):
-            key = (sid, side)
-            if key in new_s:
-                new_ends.append(o + sec.rails[side] * new_s[key])
-            else:
-                new_ends.append(c_old)
-        u_old, w_old = old[0] - o, old[-1] - o
-        u_new, w_new = new_ends[0] - o, new_ends[1] - o
-        n_old = u_old.cross(w_old)
-        n_new = u_new.cross(w_new)
-        if n_old.length < 1e-12 or n_new.length < 1e-12:
-            continue
-        # keep the out-of-plane part of the profile at the same scale relative to the width
-        n_old_u = n_old.normalized() * (old[0] - old[-1]).length
-        n_new_u = n_new.normalized() * (new_ends[0] - new_ends[1]).length
-        from mathutils import Matrix
-        basis_old = Matrix((u_old, w_old, n_old_u)).transposed()
-        try:
-            inv = basis_old.inverted()
-        except ValueError:
-            continue
-        basis_new = Matrix((u_new, w_new, n_new_u)).transposed()
-        for i, v in enumerate(sec.verts):
-            if i == 0:
-                co = new_ends[0]
-            elif i == len(sec.verts) - 1:
-                co = new_ends[1]
-            else:
-                coeff = inv @ (old[i] - o)
-                co = o + basis_new @ coeff
-            if (co - v.co).length > 1e-9:
-                v.co = co
-                moved += 1
+        ends = [sec.o + sec.rails[side] * new_s[(sid, side)] if (sid, side) in new_s
+                else (sec.verts[0] if side == 0 else sec.verts[-1]).co.copy() for side in (0, 1)]
+        stats["moved"] += _apply_section(sec, ends)
 
-    welded = 0
     if welds:
         targets = set(welds.values())
         bmesh.ops.weld_verts(bm, targetmap=welds)
-        welded = len(welds)
-        # Clean up faces/edges that collapsed around the merged vertices.
+        stats["welded"] = len(welds)
         near = {e for v in targets if v.is_valid for e in v.link_edges}
         if near:
             size = max((e.calc_length() for e in near), default=1.0)
             bmesh.ops.dissolve_degenerate(bm, dist=size * 1e-4, edges=list(near))
-    return len(sections), len(affected), moved, welded
+
+    # 6) collapse sections that ended up (almost) on top of each other
+    if merge_threshold > 0:
+        stats["collapsed"] = _collapse_thin(bm, sections, merge_threshold)
+    return stats

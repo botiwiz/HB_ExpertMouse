@@ -22,7 +22,13 @@ Edit > Preferences > Get Extensions > ⌄ (top right) > **Install from Disk…**
    - **Weld Conflicts** (aggressive) – where an edge is too short for the bevel, the vertex at its
      far end is merged into the bevel vertex, so the bevel keeps its full, smooth width instead of
      being squeezed (the idea of MESHmachine's Boolean Cleanup, which merges the vertices on one
-     side of a seam into the other)
+     side of a seam into the other; MESHmachine's Offset/Chamfer "Merge Perimeter" does the same)
+   - **Merge Threshold** – collapse neighbouring bevel slices that ended up closer than this,
+     removing sliver faces (MESHmachine's Boolean Cleanup merges loop vertices into their closest
+     neighbour within a threshold). 0 = off
+   - **Width** – widen or narrow the whole bevel afterwards by sliding along its edges (with the
+     same clamping / welding), **Taper** ramps it along an open bevel, **Flip** reverses the ramp
+     (MESHmachine's Change Width)
 
 ## Select Loop (Angle)
 Select > **Select Loop (Angle)** (also in the Edge and right-click menus). Grows edge loops from
