@@ -58,6 +58,10 @@ The mouse:
 - The back and forward buttons go to the previous and next image.
 - The status bar shows the pixel position and color under the cursor.
 
+## Look
+
+The whole UI is dark: toolbar, menus, dialogs and status bar. It doesn't follow your desktop theme. The only exception is the Open and Save file pickers: on some desktops the system draws these, and they follow the system theme.
+
 ## Settings
 
 Settings are saved in `hb_viewer.ini` next to the AppImage, or in `~/.config/hb_viewer/` if that folder isn't writable. This includes the favorites, toggles, window size and `max_megapixels`.

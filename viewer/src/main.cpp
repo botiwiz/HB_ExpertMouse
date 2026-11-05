@@ -952,8 +952,10 @@ static void rebuild_toolbar() {
         GtkToolItem* b;
         if (c.checked) { b = gtk_toggle_tool_button_new(); gtk_toggle_tool_button_set_active(GTK_TOGGLE_TOOL_BUTTON(b), c.checked()); }
         else b = gtk_tool_button_new(nullptr, nullptr);
-        bool has_icon = gtk_icon_theme_has_icon(theme, c.icon);
-        if (has_icon) gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(b), c.icon);
+        std::string icon = std::string(c.icon) + "-symbolic";      // symbolic icons follow the dark theme
+        if (!gtk_icon_theme_has_icon(theme, icon.c_str())) icon = c.icon;
+        bool has_icon = gtk_icon_theme_has_icon(theme, icon.c_str());
+        if (has_icon) gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(b), icon.c_str());
         gtk_tool_button_set_label(GTK_TOOL_BUTTON(b), c.label);
         gtk_tool_item_set_is_important(b, !has_icon);    // no icon -> show its text
         std::string tip = c.label;
@@ -978,7 +980,7 @@ static void rebuild_toolbar() {
     gtk_tool_item_set_expand(sep, TRUE);
     gtk_toolbar_insert(GTK_TOOLBAR(A.toolbar), sep, -1);
     GtkToolItem* mb = gtk_tool_button_new(nullptr, "All commands");
-    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(mb), gtk_icon_theme_has_icon(theme, "open-menu") ? "open-menu" : "view-more");
+    gtk_tool_button_set_icon_name(GTK_TOOL_BUTTON(mb), gtk_icon_theme_has_icon(theme, "open-menu-symbolic") ? "open-menu-symbolic" : "view-more");
     gtk_widget_set_tooltip_text(GTK_WIDGET(mb), "All commands (right-click a command to pin it here)");
     g_signal_connect(mb, "clicked", G_CALLBACK(+[](GtkToolButton*, gpointer) { show_menu(gtk_get_current_event()); }), nullptr);
     if (GtkWidget* inner = gtk_bin_get_child(GTK_BIN(mb))) gtk_widget_set_can_focus(inner, FALSE);
@@ -1149,6 +1151,39 @@ static void on_drop(GtkWidget*, GdkDragContext* ctx, int, int, GtkSelectionData*
 }
 
 // ---------------------------------------------------------------- main
+// Dark UI everywhere: ask the theme for its dark variant (menus, dialogs, tooltips), and
+// add CSS so toolbar, status bar and menus are dark even with themes lacking a dark variant.
+static void apply_dark_theme() {
+    g_object_set(gtk_settings_get_default(), "gtk-application-prefer-dark-theme", TRUE, nullptr);
+    static const char* css =
+        "window, dialog, .background { background-color: #1e1f22; color: #d8d8dc; }"
+        "button { background-image: none; background-color: #33353a; color: #e0e0e4; border: 1px solid #45474e; box-shadow: none; text-shadow: none; }"
+        "button:hover { background-color: #3d4046; }"
+        "button:active, button:checked { background-color: #44506a; }"
+        "button.suggested-action { background-color: #3d5a8a; border-color: #4a6aa0; }"
+        "toolbar, .toolbar { background: #26272b; border-bottom: 1px solid #111214; padding: 2px 4px; }"
+        "toolbar button, toolbar toolbutton > button { color: #d8d8dc; background: transparent; border-color: transparent; box-shadow: none; }"
+        "toolbar button:hover { background: #3a3c42; }"
+        "toolbar button:checked { background: #44506a; }"
+        "#statusbar { background: #26272b; border-top: 1px solid #111214; padding: 3px 8px; }"
+        "#statusbar label { color: #b8b9bf; }"
+        "menu, .menu, .context-menu { background-color: #2b2d31; color: #e0e0e4; border: 1px solid #111214; }"
+        "menuitem { color: #e0e0e4; }"
+        "menuitem:hover { background-color: #3d5a8a; color: #ffffff; }"
+        "menuitem:disabled, menuitem:disabled label { color: #7d7f87; }"
+        "menuitem accelerator { color: #8f9199; }"
+        "tooltip, tooltip.background { background-color: #2b2d31; color: #e0e0e4; }"
+        "treeview.view { background-color: #232428; color: #d8d8dc; }"
+        "treeview.view:selected { background-color: #3d5a8a; color: #ffffff; }"
+        "entry { background-color: #2b2d31; color: #e0e0e4; border-color: #44464d; }"
+        "separator { background-color: #3a3c42; }";
+    GtkCssProvider* p = gtk_css_provider_new();
+    gtk_css_provider_load_from_data(p, css, -1, nullptr);
+    // APPLICATION priority: above the theme, below the user's own gtk.css
+    gtk_style_context_add_provider_for_screen(gdk_screen_get_default(), GTK_STYLE_PROVIDER(p), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(p);
+}
+
 // hb_viewer --convert <in> <out.png|jpg|bmp|tiff> [max_megapixels]
 static int cli_convert(int argc, char** argv) {
     if (argc < 4) { fprintf(stderr, "usage: hb_viewer --convert <input> <output.png|jpg|bmp|tiff> [max_megapixels]\n"); return 2; }
@@ -1173,6 +1208,7 @@ static int cli_convert(int argc, char** argv) {
 int main(int argc, char** argv) {
     if (argc > 1 && !strcmp(argv[1], "--convert")) return cli_convert(argc, argv);
     gtk_init(&argc, &argv);
+    apply_dark_theme();
     g_set_application_name(APP_NAME);
     register_commands();
     load_settings();
@@ -1215,8 +1251,7 @@ int main(int argc, char** argv) {
     g_signal_connect(A.area, "drag-data-received", G_CALLBACK(on_drop), nullptr);
 
     A.statusbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
-    gtk_widget_set_margin_start(A.statusbar, 8); gtk_widget_set_margin_end(A.statusbar, 8);
-    gtk_widget_set_margin_top(A.statusbar, 3); gtk_widget_set_margin_bottom(A.statusbar, 3);
+    gtk_widget_set_name(A.statusbar, "statusbar");
     A.status_l = gtk_label_new("");
     A.status_r = gtk_label_new("");
     gtk_label_set_ellipsize(GTK_LABEL(A.status_l), PANGO_ELLIPSIZE_MIDDLE);

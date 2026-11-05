@@ -11,6 +11,7 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - Image stored in 2048px cairo tiles + mipmaps -> no 32767px limit, fast zoom-out.
 - Command registry (main.cpp `register_commands`) = single source for RMB menu, shortcuts,
   Favorites toolbar. Right-click a menu item toggles Favorite (menu stays open).
+- UI is always dark: prefer-dark-theme + app CSS (apply_dark_theme in main.cpp) + symbolic icons.
 - Settings: hb_viewer.ini next to the AppImage, fallback ~/.config/hb_viewer/.
 
 ## Files
