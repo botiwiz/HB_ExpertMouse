@@ -13,13 +13,13 @@ The inner profile vertices are re-mapped so the profile keeps its shape.
 """
 
 from mathutils import Vector
-from mathutils.geometry import intersect_line_line
+from mathutils.geometry import intersect_line_line, intersect_line_plane
 
 MAX_SEGMENTS = 128
 
 
 class Section:
-    __slots__ = ("verts", "o", "rails", "s", "L", "ok", "nbrs", "key")
+    __slots__ = ("verts", "o", "rails", "s", "L", "ok", "free", "nbrs", "key")
 
     def __init__(self, verts):
         self.verts = verts               # [c0, ..., ck]
@@ -28,6 +28,7 @@ class Section:
         self.s = [0.0, 0.0]              # slide distance from o, per side
         self.L = [0.0, 0.0]              # rail length from o to its far vertex, per side
         self.ok = [False, False]
+        self.free = [False, False]       # no edge leads back to the corner: slide on the surface
         self.nbrs = []                   # (other section, same_orientation)
         self.key = tuple(sorted((verts[0].index, verts[-1].index)))
 
@@ -58,18 +59,132 @@ def _walk_section(v0, boundary):
     return None
 
 
-def _rail_end(v, inner):
-    """Far vertex of the unselected edge at boundary vertex v that best continues the profile."""
-    out = (v.co - inner.co)
-    cands = [e for e in v.link_edges if _sel_face_count(e) == 0]
-    if not cands:
-        return None
-    if out.length < 1e-12:
-        return cands[0].other_vert(v)
-    out = out.normalized()
-    best = max(cands, key=lambda e: abs((e.other_vert(v).co - v.co).normalized().dot(out))
-               if (e.other_vert(v).co - v.co).length > 1e-12 else -1)
-    return best.other_vert(v)
+def _rail_candidates(v):
+    """Far vertices of the unselected edges at boundary vertex v (the edges it may slide on)."""
+    return [e.other_vert(v) for e in v.link_edges
+            if _sel_face_count(e) == 0 and (e.other_vert(v).co - v.co).length > 1e-12]
+
+
+EXACT_GAP = 0.02   # rails meeting this closely (relative to bevel width) are trusted outright
+MAX_GAP = 0.25
+
+
+def _pair_candidates(c0, ck, cands0, cands1):
+    """Corners where a rail of each side meets: [(gap, o, a0, a1)]."""
+    width = max((ck.co - c0.co).length, 1e-9)
+    out = []
+    for a0 in cands0:
+        d0 = (a0.co - c0.co).normalized()
+        for a1 in cands1:
+            d1 = (a1.co - ck.co).normalized()
+            if d0.cross(d1).length < 1e-4:
+                continue  # parallel rails: no corner
+            res = intersect_line_line(c0.co, a0.co, ck.co, a1.co)
+            if not res:
+                continue
+            gap = (res[0] - res[1]).length / width
+            if gap <= MAX_GAP:
+                out.append((gap, (res[0] + res[1]) / 2, a0, a1))
+    return out
+
+
+def _surface_normal(v):
+    ns = [f.normal for f in v.link_faces if not f.select]
+    n = sum(ns, Vector())
+    return n.normalized() if n.length > 1e-9 else None
+
+
+def _one_sided_candidates(c0, ck, cands0, cands1):
+    """Corners from one side's rail meeting the surface the other side lies on:
+    [(None, o, a0 or None, a1 or None)]. Used where a side has no rail that reaches the corner
+    (e.g. the bevel placed that vertex inside a face)."""
+    out = []
+    width = max((ck.co - c0.co).length, 1e-9)
+    for c_rail, c_other, cands, side in ((c0, ck, cands0, 0), (ck, c0, cands1, 1)):
+        n = _surface_normal(c_other)
+        if n is None:
+            continue
+        for a in cands:
+            d = (a.co - c_rail.co).normalized()
+            if abs(d.dot(n)) < 0.05:
+                continue
+            o = intersect_line_plane(c_rail.co, a.co, c_other.co, n)
+            if o is None or (o - c_rail.co).length > 3 * width or (o - c_other.co).length > 3 * width:
+                continue
+            out.append((None, o, a, None) if side == 0 else (None, o, None, a))
+    return out
+
+
+def _set_corner(sec, cand):
+    _gap, o, a0, a1 = cand
+    c0, ck = sec.verts[0], sec.verts[-1]
+    sec.o = o
+    width = max((ck.co - c0.co).length, 1e-9)
+    # A side without a rail in the chosen corner may still have one passing through it.
+    for side, c in ((0, c0), (1, ck)):
+        if (a0, a1)[side] is None:
+            for a in _rail_candidates(c):
+                d = (a.co - c.co)
+                t = (o - c.co).dot(d) / d.length_squared
+                if (c.co + d * t - o).length < EXACT_GAP * width:
+                    if side == 0:
+                        a0 = a
+                    else:
+                        a1 = a
+                    break
+    for side, (c, a) in enumerate(((c0, a0), (ck, a1))):
+        sec.ok[side] = False
+        sec.free[side] = False
+        if a is None:
+            # Slide on the surface this vertex lies on, straight away from the corner.
+            n = _surface_normal(c)
+            d = c.co - o
+            if n is not None:
+                d = d - n * d.dot(n)
+            if d.length < 1e-9:
+                continue
+            d.normalize()
+            sec.rails[side] = d
+            sec.L[side] = float("inf")
+            sec.s[side] = (c.co - o).dot(d)
+            sec.ok[side] = True
+            sec.free[side] = True
+            continue
+        ra = a.co - o
+        if ra.length < 1e-12:
+            continue
+        d = ra.normalized()
+        sec.rails[side] = d
+        sec.L[side] = ra.length
+        sec.s[side] = (c.co - o).dot(d)
+        sec.ok[side] = True
+
+
+def _nbr_slide(sec, side):
+    vals = sorted(n.s[side if same else 1 - side] for n, same in sec.nbrs
+                  if n.o is not None and n.ok[side if same else 1 - side]
+                  and not n.free[side if same else 1 - side])
+    return vals[len(vals) // 2] if vals else None
+
+
+def _score(sec, cand, ref, width):
+    """Lower is better: close to the neighbours' corners, and the rail side(s) slide like
+    their neighbours (a healthy side pins down the corner)."""
+    _gap, o, a0, a1 = cand
+    score = (o - ref).length / width
+    for side, (c, a) in enumerate(((sec.verts[0], a0), (sec.verts[-1], a1))):
+        if a is None:
+            continue
+        ra = a.co - o
+        if ra.length < 1e-12:
+            return float("inf")
+        sl = (c.co - o).dot(ra.normalized())
+        if not (0.0 < sl < ra.length):
+            score += 5.0  # this corner would mean the vertex slid off its own edge: unlikely
+        med = _nbr_slide(sec, side)
+        if med:
+            score += 2.0 * abs(sl - med) / med
+    return score
 
 
 def build_sections(bm):
@@ -95,38 +210,6 @@ def build_sections(bm):
         by_end[verts[0]] = (sec, 0)
         by_end[verts[-1]] = (sec, 1)
 
-    # Recover the original corner and the slide of each side.
-    for sec in sections:
-        c0, ck = sec.verts[0], sec.verts[-1]
-        a0 = _rail_end(c0, sec.verts[1])
-        a1 = _rail_end(ck, sec.verts[-2])
-        if a0 is None or a1 is None:
-            continue
-        d0 = a0.co - c0.co
-        d1 = a1.co - ck.co
-        if d0.length < 1e-12 or d1.length < 1e-12:
-            continue
-        if d0.normalized().cross(d1.normalized()).length < 1e-4:
-            continue  # rails parallel: no corner to recover
-        res = intersect_line_line(c0.co, a0.co, ck.co, a1.co)
-        if not res:
-            continue
-        p0, p1 = res
-        width = (ck.co - c0.co).length
-        if (p0 - p1).length > max(1e-6, 0.25 * width):
-            continue  # rails don't meet: not a clean bevel section
-        o = (p0 + p1) / 2
-        sec.o = o
-        for side, (c, a) in enumerate(((c0, a0), (ck, a1))):
-            ra = a.co - o
-            if ra.length < 1e-12:
-                continue
-            d = ra.normalized()
-            sec.rails[side] = d
-            sec.L[side] = ra.length
-            sec.s[side] = (c.co - o).dot(d)
-            sec.ok[side] = True
-
     # Neighbours along the strip (sections whose ends share a boundary edge).
     for sec in sections:
         for side, end in ((0, sec.verts[0]), (1, sec.verts[-1])):
@@ -142,6 +225,33 @@ def build_sections(bm):
                 same = (oside == side)
                 if not any(n is osec for n, _ in sec.nbrs):
                     sec.nbrs.append((osec, same))
+    # Recover the original corner of each section and the slide of each side.
+    cands = {}
+    for sec in sections:
+        c0, ck = sec.verts[0], sec.verts[-1]
+        r0, r1 = _rail_candidates(c0), _rail_candidates(ck)
+        pairs = _pair_candidates(c0, ck, r0, r1)
+        cands[id(sec)] = pairs + _one_sided_candidates(c0, ck, r0, r1)
+        exact = [p for p in pairs if p[0] < EXACT_GAP]
+        if exact:
+            _set_corner(sec, min(exact, key=lambda p: p[0]))
+
+    # The rest: the candidate that continues the neighbours' corners (the original edge is smooth).
+    for _ in range(len(sections)):
+        progress = False
+        for sec in sections:
+            if sec.o is not None or not cands[id(sec)]:
+                continue
+            ref = [n.o for n, _same in sec.nbrs if n.o is not None]
+            if not ref:
+                continue
+            ref = sum(ref, Vector()) / len(ref)
+            width = max((sec.verts[-1].co - sec.verts[0].co).length, 1e-9)
+            best = min(cands[id(sec)], key=lambda cd: _score(sec, cd, ref, width))
+            _set_corner(sec, best)
+            progress = True
+        if not progress:
+            break
     return sections
 
 

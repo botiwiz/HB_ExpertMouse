@@ -61,7 +61,7 @@ are edge-slid to a smoothed value; the rest of the bevel is left untouched"""
                 bm.normal_update()
                 bmesh.update_edit_mesh(obj.data)
         if not total_sec:
-            self.report({'WARNING'}, "Select the bevel's faces (a bevel leaves them selected)")
+            self.report({'WARNING'}, "No bevel found: select the bevel's faces (a bevel leaves them selected)")
             return {'CANCELLED'}
         if not total_moved:
             self.report({'INFO'}, "No overlaps found in %d bevel sections" % total_sec)
