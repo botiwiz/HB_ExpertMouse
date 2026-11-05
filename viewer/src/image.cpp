@@ -22,7 +22,7 @@ static void parallel_for(int n, const std::function<void(int)>& fn) {
 }
 
 static void free_level(Level& l) {
-    for (auto* s : l.tiles) if (s) cairo_surface_destroy(s);
+    for (auto* s : l.tiles) delete s;
     l.tiles.clear();
 }
 
@@ -36,9 +36,9 @@ static bool make_level(Level& l, int w, int h) {
     for (int r = 0; r < l.rows; r++)
         for (int c = 0; c < l.cols; c++) {
             int tw = std::min(Image::T, w - c * Image::T), th = std::min(Image::T, h - r * Image::T);
-            auto* s = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, tw, th);
-            if (cairo_surface_status(s) != CAIRO_STATUS_SUCCESS) { cairo_surface_destroy(s); return false; }
-            l.tiles[r * l.cols + c] = s;     // cairo zero-fills new image surfaces
+            auto* s = new Tile(tw, th);
+            if (!s->data) { delete s; return false; }
+            l.tiles[r * l.cols + c] = s;
         }
     return true;
 }
@@ -64,8 +64,8 @@ void Image::put_channel(int y, int x0, int slot, const uint8_t* src, int n) {
     int x = x0, end = std::min(x0 + n, l.w);
     while (x < end) {
         int c = x / T, tx = x % T;
-        cairo_surface_t* s = l.tile(c, r);
-        uint8_t* row = cairo_image_surface_get_data(s) + (size_t)ty * cairo_image_surface_get_stride(s);
+        Tile* s = l.tile(c, r);
+        uint8_t* row = s->data + (size_t)ty * s->stride;
         int cnt = std::min(T - tx, end - x);
         uint8_t* d = row + tx * 4 + slot;
         const uint8_t* sp = src + (x - x0);
@@ -80,8 +80,8 @@ void Image::put_rgba(int y, const uint8_t* src, int n, int ch) {
     int x = 0, end = std::min(n, l.w);
     while (x < end) {
         int c = x / T, tx = x % T;
-        cairo_surface_t* s = l.tile(c, r);
-        uint8_t* d = cairo_image_surface_get_data(s) + (size_t)ty * cairo_image_surface_get_stride(s) + tx * 4;
+        Tile* s = l.tile(c, r);
+        uint8_t* d = s->data + (size_t)ty * s->stride + tx * 4;
         int cnt = std::min(T - tx, end - x);
         const uint8_t* sp = src + (size_t)x * ch;
         if (ch == 4) memcpy(d, sp, (size_t)cnt * 4);
@@ -154,8 +154,8 @@ void Image::put_bgra(int y, const uint8_t* src, int n) {
     int r = y / T, ty = y % T;
     for (int x = 0, end = std::min(n, l.w); x < end;) {
         int c = x / T, tx = x % T, cnt = std::min(T - tx, end - x);
-        cairo_surface_t* s = l.tile(c, r);
-        memcpy(cairo_image_surface_get_data(s) + (size_t)ty * cairo_image_surface_get_stride(s) + tx * 4, src + (size_t)x * 4, (size_t)cnt * 4);
+        Tile* s = l.tile(c, r);
+        memcpy(s->data + (size_t)ty * s->stride + tx * 4, src + (size_t)x * 4, (size_t)cnt * 4);
         x += cnt;
     }
 }
@@ -164,21 +164,18 @@ void Image::finalize(RawLayout layout, bool alpha, bool unmatte, const uint8_t* 
     has_alpha = alpha;
     Level& l = lv[0];
     parallel_for((int)l.tiles.size(), [&](int i) {
-        cairo_surface_t* s = l.tiles[i];
-        cairo_surface_flush(s);
-        int w = cairo_image_surface_get_width(s), h = cairo_image_surface_get_height(s);
-        int stride = cairo_image_surface_get_stride(s);
-        uint8_t* base = cairo_image_surface_get_data(s);
+        Tile* s = l.tiles[i];
+        int w = s->w, h = s->h;
+        int stride = s->stride;
+        uint8_t* base = s->data;
         for (int y = 0; y < h; y++) {
             uint8_t* p = base + (size_t)y * stride;
             const uint8_t* ch[4] = {p, p + 1, p + 2, p + 3};
             convert_pixels(layout, alpha, unmatte, pal, ch, 4, p, w);   // in place: reads a pixel before writing it
         }
-        cairo_surface_mark_dirty(s);
     });
 }
 
-void Image::mark_dirty() { for (auto* s : lv[0].tiles) cairo_surface_mark_dirty(s); }
 
 void Image::build_mips() {
     while (lv.size() > 1) { free_level(lv.back()); lv.pop_back(); }
@@ -189,17 +186,17 @@ void Image::build_mips() {
         // dst tile (c,r) is fed by src tiles (2c..2c+1, 2r..2r+1): each one fills a quadrant
         parallel_for((int)dst.tiles.size(), [&](int i) {
             int c = i % dst.cols, r = i / dst.cols;
-            cairo_surface_t* d = dst.tiles[i];
-            uint8_t* db = cairo_image_surface_get_data(d);
-            int ds = cairo_image_surface_get_stride(d);
-            int dw = cairo_image_surface_get_width(d), dh = cairo_image_surface_get_height(d);
+            Tile* d = dst.tiles[i];
+            uint8_t* db = d->data;
+            int ds = d->stride;
+            int dw = d->w, dh = d->h;
             for (int q = 0; q < 4; q++) {
                 int sc = 2 * c + (q & 1), sr = 2 * r + (q >> 1);
                 if (sc >= src.cols || sr >= src.rows) continue;
-                cairo_surface_t* s = src.tile(sc, sr);
-                const uint8_t* sb = cairo_image_surface_get_data(s);
-                int ss = cairo_image_surface_get_stride(s);
-                int sw = cairo_image_surface_get_width(s), sh = cairo_image_surface_get_height(s);
+                Tile* s = src.tile(sc, sr);
+                const uint8_t* sb = s->data;
+                int ss = s->stride;
+                int sw = s->w, sh = s->h;
                 int ox = (q & 1) * (T / 2), oy = (q >> 1) * (T / 2);
                 for (int y = 0; y < sh / 2 && oy + y < dh; y++) {
                     const uint8_t* s0 = sb + (size_t)(2 * y) * ss;
@@ -216,7 +213,6 @@ void Image::build_mips() {
                     }
                 }
             }
-            cairo_surface_mark_dirty(d);
         });
         lv.push_back(std::move(dst));
     }
@@ -224,8 +220,8 @@ void Image::build_mips() {
 
 bool Image::pixel(int x, int y, uint8_t o[4]) const {
     if (lv.empty() || x < 0 || y < 0 || x >= lv[0].w || y >= lv[0].h) return false;
-    cairo_surface_t* s = lv[0].tile(x / T, y / T);
-    const uint8_t* p = cairo_image_surface_get_data(s) + (size_t)(y % T) * cairo_image_surface_get_stride(s) + (x % T) * 4;
+    Tile* s = lv[0].tile(x / T, y / T);
+    const uint8_t* p = s->data + (size_t)(y % T) * s->stride + (x % T) * 4;
     uint8_t a = p[3];
     auto un = [a](uint8_t c) { return a ? (uint8_t)std::min(255, (c * 255 + a / 2) / a) : (uint8_t)0; };
     o[0] = un(p[2]); o[1] = un(p[1]); o[2] = un(p[0]); o[3] = a;

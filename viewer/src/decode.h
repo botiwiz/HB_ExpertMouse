@@ -1,20 +1,20 @@
 #pragma once
 #include "image.h"
-#include <gdk-pixbuf/gdk-pixbuf.h>
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
+class QImage;
+
 struct LoadResult {
     std::unique_ptr<Image> img;
     ImageInfo info;
     std::string error;
-    GdkPixbufAnimation* anim = nullptr;   // non-null for animated GIF/WebP (owned, unref when done)
-    ~LoadResult() { if (anim) g_object_unref(anim); }
+    bool animated = false;          // multi-frame GIF/WebP/APNG...: the viewer plays it with QMovie
 };
 
-// Decode 'path'. Images with more than budget_px pixels are decoded at 1/N size.
+// Decode 'path' (thread-safe). Images with more than budget_px pixels are decoded at 1/N size.
 // on_preview (optional) receives a quick low-res result first for very large PSD/PSB files.
 std::unique_ptr<LoadResult> load_image(const std::string& path, uint64_t budget_px, LoadCtl& ctl,
                                        const std::function<void(std::unique_ptr<LoadResult>)>& on_preview = nullptr);
@@ -22,11 +22,9 @@ std::unique_ptr<LoadResult> load_image(const std::string& path, uint64_t budget_
 // PSD / PSB (Photoshop) merged-composite decoder. Returns false + r.error on failure.
 bool load_psd(const uint8_t* data, size_t len, uint64_t budget_px, LoadCtl& ctl, LoadResult& r, bool fast = false);
 
-// Copy a GdkPixbuf into a new Image (used for loaders and animation frames).
-std::unique_ptr<Image> image_from_pixbuf(GdkPixbuf* pb);
-
-// Straight-alpha RGBA copy of level 0 (nullptr if over 2 GB).
-GdkPixbuf* pixbuf_from_image(Image* im);
+// QImage <-> Image (straight / premultiplied handled internally)
+std::unique_ptr<Image> image_from_qimage(const QImage& q);
+QImage qimage_from_image(Image* im);     // full level-0 copy; null QImage if too large
 
 std::string lower_ext(const std::string& path);
 bool is_image_ext(const std::string& ext);

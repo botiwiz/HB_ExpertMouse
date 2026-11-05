@@ -204,7 +204,6 @@ bool load_psd(const uint8_t* data, size_t len, uint64_t budget, LoadCtl& ctl, Lo
     TM("decode");
     if (ctl.cancel) { r.img.reset(); r.error = "cancelled"; return false; }
     r.img->has_alpha = alpha;
-    for (auto* t : r.img->lv[0].tiles) cairo_surface_mark_dirty(t);
     r.img->build_mips();
     TM("mips");
     ctl.progress = 1000;

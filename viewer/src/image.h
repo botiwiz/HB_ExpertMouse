@@ -1,7 +1,7 @@
-// Tiled, mip-mapped RGBA image. Tiles avoid cairo's 32767px surface limit and let us
+// Tiled, mip-mapped RGBA image. Tiles avoid 32k-pixel image limits and let us
 // draw only what is visible; mip levels make zoomed-out views of huge images fast.
 #pragma once
-#include <cairo.h>
+#include <cstdlib>
 #include <atomic>
 #include <cstdint>
 #include <string>
@@ -10,10 +10,21 @@
 // How bytes 0..3 of each freshly decoded pixel should be interpreted by finalize().
 enum class RawLayout { RGBA, Gray, GrayA, Indexed, CMYK, Lab, LabA };
 
+// One tile: premultiplied 32-bit pixels, bytes B,G,R,A (= QImage::Format_ARGB32_Premultiplied
+// on little-endian), zero-initialised.
+struct Tile {
+    int w = 0, h = 0, stride = 0;
+    uint8_t* data = nullptr;
+    Tile(int w_, int h_) : w(w_), h(h_), stride(w_ * 4), data((uint8_t*)calloc((size_t)w_ * h_, 4)) {}
+    ~Tile() { free(data); }
+    Tile(const Tile&) = delete;
+    Tile& operator=(const Tile&) = delete;
+};
+
 struct Level {
     int w = 0, h = 0, cols = 0, rows = 0;
-    std::vector<cairo_surface_t*> tiles;   // row-major, cols*rows
-    cairo_surface_t* tile(int c, int r) const { return tiles[r * cols + c]; }
+    std::vector<Tile*> tiles;   // row-major, cols*rows
+    Tile* tile(int c, int r) const { return tiles[r * cols + c]; }
 };
 
 class Image {
@@ -33,11 +44,10 @@ public:
     // Write n RGBA (or RGB when ch==3) pixels into row y of level 0.
     void put_rgba(int y, const uint8_t* src, int n, int ch);
 
-    // Convert raw bytes to cairo's premultiplied ARGB32, optionally un-matting
+    // Convert raw bytes to premultiplied ARGB32, optionally un-matting
     // (Photoshop stores merged transparency composited over white).
     void finalize(RawLayout layout, bool has_alpha, bool unmatte_white, const uint8_t* palette768 = nullptr);
     void build_mips();                      // call after finalize()
-    void mark_dirty();                      // after editing level-0 tile data directly
 
     // Read one premultiplied pixel of level 0 as straight RGBA.
     bool pixel(int x, int y, uint8_t rgba[4]) const;
