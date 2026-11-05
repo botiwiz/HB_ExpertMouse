@@ -14,16 +14,20 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - UI is always dark: prefer-dark-theme + app CSS (apply_dark_theme in main.cpp) + symbolic icons.
 - Settings: hb_viewer.ini next to the AppImage, fallback ~/.config/hb_viewer/.
 
-## Files
-- src/image.*   tiled image, pixel conversion, mipmaps
-- src/psd.cpp   PSD/PSB decoder
-- src/decode.*  format dispatch (pixbuf / stb / RAW preview), extension lists
-- src/thumbs.*  thumbnail generation + freedesktop cache + worker pool
-- src/browser.* folder tree, path bar, thumbnail grid
-- src/main.cpp  GTK UI, commands, favorites, loading jobs + cache/preload, --convert CLI
-- build.sh, build-appimage.sh, appdir/, CI job `viewer-appimage` in .github/workflows/build.yml
+## Files (Qt6/KF6 version)
+- src/image.*      tiled image (plain buffers, ARGB32 premultiplied), conversion, mipmaps
+- src/psd.cpp      PSD/PSB decoder
+- src/decode.*     format dispatch (QImageReader / stb / RAW preview), extension lists
+- src/cli.*        --convert; src/cli_main.cpp = hb_convert (CLI-only build)
+- src/imageview.*  viewer canvas (QPainter, tiles, mips, zoom/rotate, QMovie animation)
+- src/mainwindow.* DolphinPart host, Places + KUrlNavigator, command registry, favorites, loading jobs
+- src/main.cpp     app, Breeze Dark, --selftest
+- tests/viewtest.cpp offscreen render test (CLI-only build)
+- Local test build: cmake -S . -B build/cli -DHBV_CLI_ONLY=ON (only Qt6 base needed)
+- build-appimage.sh, appdir/, CI job `viewer-appimage` (debian:trixie container) in .github/workflows/build.yml
+- Old GTK version (incl. own browser/thumbnailer) is in git history before commit 14e754b.
 
-## IN PROGRESS: switch to Qt6/KF6 + embedded Dolphin (user chose "Embed Dolphin", user runs Plasma 6)
+## DONE (pending CI verification): switch to Qt6/KF6 + embedded Dolphin (user chose "Embed Dolphin", user runs Plasma 6)
 - Browser = DolphinPart (KParts, plugin kf6/parts/dolphinpart) like Konqueror; host handles
   NavigationExtension::openUrlRequest: dir -> part->openUrl, image/3D -> our viewer, else KIO::OpenUrlJob.
   Context menu: NavigationExtension::popupMenu -> KFileItemActions + part edit actions + our commands.
