@@ -19,7 +19,7 @@ import bmesh
 import bpy
 from bpy.props import BoolProperty, FloatProperty, IntProperty
 
-from . import fix, loopselect
+from . import fix, loopselect, turncorner
 
 _keymaps = []
 
@@ -107,6 +107,7 @@ are edge-slid to a smoothed value; the rest of the bevel is left untouched"""
 def menu_func(self, context):
     self.layout.operator(MESH_OT_hb_bevel_fix.bl_idname, icon='MOD_BEVEL')
     self.layout.operator(loopselect.MESH_OT_hb_select_loop.bl_idname, icon='EDGESEL')
+    self.layout.operator(turncorner.MESH_OT_hb_turn_corner.bl_idname, icon='MOD_BEVEL')
 
 
 def select_menu_func(self, context):
@@ -116,6 +117,7 @@ def select_menu_func(self, context):
 def register():
     bpy.utils.register_class(MESH_OT_hb_bevel_fix)
     loopselect.register()
+    turncorner.register()
     bpy.types.VIEW3D_MT_select_edit_mesh.append(select_menu_func)
     bpy.types.VIEW3D_MT_edit_mesh_edges.append(menu_func)
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.append(menu_func)
@@ -136,5 +138,6 @@ def unregister():
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(menu_func)
     bpy.types.VIEW3D_MT_edit_mesh_edges.remove(menu_func)
     bpy.types.VIEW3D_MT_select_edit_mesh.remove(select_menu_func)
+    turncorner.unregister()
     loopselect.unregister()
     bpy.utils.unregister_class(MESH_OT_hb_bevel_fix)

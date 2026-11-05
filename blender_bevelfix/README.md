@@ -30,6 +30,21 @@ Edit > Preferences > Get Extensions > ⌄ (top right) > **Install from Disk…**
      same clamping / welding), **Taper** ramps it along an open bevel, **Flip** reverses the ramp
      (MESHmachine's Change Width)
 
+## Turn Corner
+Edge menu / right-click menu > **Turn Corner**, with the corner face selected (where three
+chamfers meet):
+- a **triangle** corner (what Blender's 1-segment bevel makes) becomes a **quad corner** —
+  *Corner* (0–2) picks which way the chamfers flow through it;
+- a **quad corner** is **turned**: the chamfer that ended there now flows through, and another
+  one ends instead. Run it again to keep turning.
+- *Width* sets the width of the turned chamfer (0 = same as the existing one).
+
+![triangle corner, quad corner, turned, turned again](turn_corner.png)
+
+Same idea as MESHmachine's Turn Corner (split the corner's outer vertex along its two outward
+edges, rebuild the faces around it, merge the two inner vertices where their edges meet), written
+from scratch. Works on single-segment chamfers; multi-segment corner patches aren't handled.
+
 ## Select Loop (Angle)
 Select > **Select Loop (Angle)** (also in the Edge and right-click menus). Grows edge loops from
 the selected edge(s) in the direction they point: at each vertex it continues along the edge that
