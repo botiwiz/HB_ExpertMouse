@@ -27,7 +27,7 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - build-appimage.sh, appdir/, CI job `viewer-appimage` (debian:trixie container) in .github/workflows/build.yml
 - Old GTK version (incl. own browser/thumbnailer) is in git history before commit 14e754b.
 
-## DONE (pending CI verification): switch to Qt6/KF6 + embedded Dolphin (user chose "Embed Dolphin", user runs Plasma 6)
+## DONE (CI: builds on trixie, selftest "dolphinpart: LOADED", 102 commands): Qt6/KF6 + embedded Dolphin (user chose "Embed Dolphin", user runs Plasma 6)
 - Browser = DolphinPart (KParts, plugin kf6/parts/dolphinpart) like Konqueror; host handles
   NavigationExtension::openUrlRequest: dir -> part->openUrl, image/3D -> our viewer, else KIO::OpenUrlJob.
   Context menu: NavigationExtension::popupMenu -> KFileItemActions + part edit actions + our commands.
