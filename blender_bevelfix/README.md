@@ -30,6 +30,23 @@ Edit > Preferences > Get Extensions > ⌄ (top right) > **Install from Disk…**
      same clamping / welding), **Taper** ramps it along an open bevel, **Flip** reverses the ramp
      (MESHmachine's Change Width)
 
+## Boolean Bevel
+Edge menu / right-click menu > **Boolean Bevel**, with the boolean's intersection loop selected
+(edges). MESHmachine's chamfer workflow as one step:
+
+1. **Boolean Cleanup** – loop vertices the boolean added mid-face (no edge on the kept side) are
+   merged into their closest loop neighbour, closest first, and it **stops automatically** once the
+   remaining gaps are longer than *Merge Distance* (× width). *Keep Side* Auto keeps the side most
+   loop vertices belong to (usually the cutter).
+2. **Offset** – a support loop on both sides (*Offset* × width away), straight across the surface
+   (or along existing edges with *Loop Slide*), so the bevel gets a clean strip of quads.
+3. **Offset cleanup** – existing vertices left inside the new strip or on top of the support loop
+   are pushed just outside it, slivers lying along the loop are dissolved, and faces that would
+   fold are merged into their neighbour (MESHmachine's Merge Perimeter idea).
+4. **Bevel** the loop (*Width*, *Segments*, *Shape*), then **Fix Bevel Overlap** on the result.
+
+![boolean union, then Boolean Bevel](boolean_bevel.png)
+
 ## Turn Corner
 Edge menu / right-click menu > **Turn Corner**, with the corner face selected (where three
 chamfers meet):

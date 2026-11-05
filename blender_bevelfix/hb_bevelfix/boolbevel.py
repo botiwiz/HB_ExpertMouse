@@ -135,13 +135,14 @@ def cleanup(bm, seq, cyclic, edges, keep, threshold):
             break
         _d, i, w = best
         v = order.pop(i)
-        bmesh.ops.pointmerge(bm, verts=[v, w], merge_co=w.co.copy())
+        bmesh.ops.weld_verts(bm, targetmap={v: w})
         merged += 1
     return order, merged
 
 
 def choose_side(seq, edges):
-    """Keep the side with fewer rail vertices (the more regular surface, usually the cutter)."""
+    """Keep the side most loop vertices have an edge on (their structure, usually the cutter's);
+    the minority - vertices the boolean added mid-face on that side - get merged away."""
     a, b = split_sides(seq, edges)
     le = set(edges)
     na = sum(1 for v in seq if rail_edges(v, a, le))
@@ -150,7 +151,7 @@ def choose_side(seq, edges):
         return 1
     if nb == 0:
         return 0
-    return 0 if na <= nb else 1
+    return 0 if na >= nb else 1
 
 
 # ----------------------------------------------------------------------------
@@ -161,55 +162,97 @@ def _side_normal(v, faces):
     return n.normalized() if n.length > 1e-12 else None
 
 
-def offset_side(bm, seq, cyclic, edges, side_faces, dist, reuse_tol=0.35):
+def offset_side(bm, seq, cyclic, edges, side_faces, dist, reuse_tol=0.35, loop_slide=False):
     """Build a parallel loop on one side; returns (offset verts, new strip faces)."""
     loop_edges = set(edges)
     n = len(seq)
     targets = []   # per loop vertex: (existing vertex to reuse) or (new position)
+    snap = {}      # re-used vertex -> where it moves to
     for i, v in enumerate(seq):
         prev_v = seq[i - 1] if (cyclic or i > 0) else None
         next_v = seq[(i + 1) % n] if (cyclic or i < n - 1) else None
         tangent = ((next_v.co if next_v else v.co) - (prev_v.co if prev_v else v.co))
         rails = rail_edges(v, side_faces, loop_edges)
-        if rails:
+        if rails and loop_slide:
             # the rail most perpendicular to the loop
             rail = min(rails, key=lambda e: abs((e.other_vert(v).co - v.co).normalized().dot(tangent.normalized()))
                        if tangent.length > 1e-12 else 0)
             far = rail.other_vert(v)
             L = (far.co - v.co).length
-            if abs(L - dist) <= reuse_tol * dist:
-                targets.append(far)
-            else:
-                targets.append(v.co + (far.co - v.co).normalized() * min(dist, 0.8 * L))
+            targets.append(v.co + (far.co - v.co).normalized() * min(dist, 0.8 * L))
             continue
         nrm = _side_normal(v, side_faces)
         if nrm is None or tangent.length < 1e-12:
             raise LoopError("Can't offset a loop vertex (no faces on one side)")
         d = nrm.cross(tangent).normalized()
-        centre = sum((f.calc_center_median() for f in v.link_faces if f in side_faces), Vector())
-        if d.dot(centre / max(1, len([f for f in v.link_faces if f in side_faces])) - v.co) < 0:
+        # Which way is "into" this side: from the winding of the side's face on each loop edge at v
+        # (a face's interior lies to the left of its edges, seen along the face normal).
+        inward = Vector()
+        for e in v.link_edges:
+            if e not in loop_edges:
+                continue
+            for f in e.link_faces:
+                if f not in side_faces:
+                    continue
+                for l in f.loops:
+                    if l.edge is e:
+                        p, q = l.vert.co, l.link_loop_next.vert.co
+                        inward += f.normal.cross(q - p).normalized()
+        if inward.length > 1e-9 and d.dot(inward) < 0:
             d = -d
-        targets.append(v.co + d * dist)
+        target = v.co + d * dist
+        # Re-use an existing outward neighbour that already sits about where the offset goes.
+        near = [e.other_vert(v) for e in rails if (e.other_vert(v).co - target).length <= reuse_tol * dist]
+        if near:
+            w = min(near, key=lambda w: (w.co - target).length)
+            snap[w] = target  # moved onto the offset loop (like Merge Perimeter)
+            targets.append(w)
+        else:
+            targets.append(target)
 
     # Neighbouring loop vertices must not re-use the same far vertex (that would make a triangle).
     for i in range(n):
         j = (i + 1) % n
         if (cyclic or j > i) and isinstance(targets[i], bmesh.types.BMVert) and targets[i] is targets[j]:
             targets[j] = targets[j].co.copy()
+
+    def specs_for(sub):
+        out = []
+        for f in side_faces:
+            verts = []
+            for v in f.verts:
+                w = sub.get(v, v)
+                if not verts or verts[-1] is not w:
+                    verts.append(w)
+            if len(verts) > 1 and verts[0] is verts[-1]:
+                verts.pop()
+            out.append((f, verts))
+        return out
+
+    def bad(f, verts):
+        if len(verts) < 3 or len(set(verts)) != len(verts):
+            return True
+        existing = bm.faces.get(verts) if all(isinstance(v, bmesh.types.BMVert) for v in verts) else None
+        return existing is not None and existing not in side_faces
+
+    # Re-using an existing vertex must not break a face; where it would, place a new vertex instead.
+    for _ in range(n + 1):
+        sub = {v: t for v, t in zip(seq, targets) if isinstance(t, bmesh.types.BMVert)}
+        broken = [f for f, verts in specs_for(sub) if bad(f, verts)]
+        if not broken:
+            break
+        for f in broken:
+            for i, v in enumerate(seq):
+                if v in f.verts and isinstance(targets[i], bmesh.types.BMVert):
+                    targets[i] = targets[i].co.copy()
     offs = [t if isinstance(t, bmesh.types.BMVert) else bm.verts.new(t) for t in targets]
+    for w in offs:
+        if w in snap:
+            w.co = snap[w]
     sub = dict(zip(seq, offs))
 
     # Rebuild the side's faces with the offset vertices in place of the loop vertices.
-    specs = []
-    for f in side_faces:
-        verts = []
-        for v in f.verts:
-            w = sub.get(v, v)
-            if not verts or verts[-1] is not w:
-                verts.append(w)
-        if len(verts) > 1 and verts[0] is verts[-1]:
-            verts.pop()
-        specs.append((verts, f.material_index, f.smooth))
+    specs = [(verts, f.material_index, f.smooth) for f, verts in specs_for(sub)]
     bmesh.ops.delete(bm, geom=list(side_faces), context='FACES_ONLY')
     rebuilt = []
     for verts, mat, smooth in specs:
@@ -220,6 +263,8 @@ def offset_side(bm, seq, cyclic, edges, side_faces, dist, reuse_tol=0.35):
                 continue
             f.material_index, f.smooth = mat, smooth
             rebuilt.append(f)
+    if len(rebuilt) != len(specs):
+        raise LoopError("Offset failed to rebuild %d face(s); try a smaller Offset" % (len(specs) - len(rebuilt)))
 
     # The strip of quads between the loop and its offset.
     strip = []
@@ -242,21 +287,110 @@ def offset_side(bm, seq, cyclic, edges, side_faces, dist, reuse_tol=0.35):
     return offs, strip, rebuilt
 
 
-def clean_offset(bm, offs, protect, tol):
-    """Weld existing vertices that ended up within `tol` of an offset vertex into it."""
-    targetmap = {}
+def _closest_on_loop(co, seq, cyclic):
+    from mathutils.geometry import intersect_point_line
+    best, best_q = float("inf"), None
+    n = len(seq)
+    for i in range(n if cyclic else n - 1):
+        a, b = seq[i].co, seq[(i + 1) % n].co
+        p, t = intersect_point_line(co, a, b)
+        q = a if t <= 0 else b if t >= 1 else p
+        d = (co - q).length
+        if d < best:
+            best, best_q = d, q
+    return best, best_q
+
+
+def _dist_to_loop(co, seq, cyclic):
+    return _closest_on_loop(co, seq, cyclic)[0]
+
+
+def clean_offset(bm, offs, protect, tol, seq=None, cyclic=True, dist=0.0, rings=()):
+    """Clean up after the offset (like MESHmachine's Merge Perimeter): existing vertices sitting on
+    top of an offset vertex are welded into it; ones left inside the new strip or right on the
+    offset loop are pushed out to just beyond it, so the faces around the loop can't fold."""
+    offs = [o for o in offs if o.is_valid]
+    targetmap, pushed = {}, 0
     for o in offs:
-        if not o.is_valid:
-            continue
         for f in o.link_faces:
             for w in f.verts:
-                if w is o or w in protect or w in targetmap or w in targetmap.values():
+                if w in protect or w in targetmap or w in offs:
                     continue
-                if (w.co - o.co).length < tol:
-                    targetmap[w] = o
+                if seq is None or dist <= 0:
+                    if (w.co - o.co).length < tol:
+                        targetmap[w] = o
+                    continue
+                d, q = _closest_on_loop(w.co, seq, cyclic)
+                on_ring = (w.co - o.co).length < tol or any(_dist_to_loop(w.co, r, cyclic) < tol for r in rings)
+                if (d < dist * 0.98 or on_ring) and q is not None and (w.co - q).length > 1e-9:
+                    w.co = q + (w.co - q).normalized() * (dist + max(tol, 0.25 * dist))
+                    pushed += 1
     if targetmap:
         bmesh.ops.weld_verts(bm, targetmap=targetmap)
-    return len(targetmap)
+    return len(targetmap) + pushed
+
+
+def _folded(f):
+    """Face self-intersects in its own plane (or is degenerate)."""
+    from mathutils.geometry import intersect_line_line_2d
+    n = f.normal
+    if n.length < 1e-9 or f.calc_area() < 1e-12:
+        return True
+    x = (f.verts[1].co - f.verts[0].co)
+    x = (x - n * x.dot(n)).normalized()
+    y = n.cross(x)
+    pts = [Vector((v.co.dot(x), v.co.dot(y))) for v in f.verts]
+    k = len(pts)
+    for i in range(k):
+        for j in range(i + 2, k):
+            if i == 0 and j == k - 1:
+                continue
+            p = intersect_line_line_2d(pts[i], pts[(i + 1) % k], pts[j], pts[(j + 1) % k])
+            if p is not None and all((p - q).length > 1e-7 for q in (pts[i], pts[(i + 1) % k], pts[j], pts[(j + 1) % k])):
+                return True
+    return False
+
+
+def merge_folded(bm, ring, strips):
+    """Faces next to an offset loop that fold over themselves (thin slivers where an old edge runs
+    almost along the loop) are merged into their outer neighbour by dissolving their outer edges."""
+    ring = {v for v in ring if v.is_valid}
+    fixed = 0
+    for _ in range(4):
+        strips = {f for f in strips if f.is_valid}
+        bad = [f for f in {f for v in ring if v.is_valid for f in v.link_faces}
+               if f not in strips and _folded(f)]
+        if not bad:
+            break
+        edges = set()
+        for f in bad:
+            for e in f.edges:
+                if len(e.link_faces) == 2 and not any(g in strips for g in e.link_faces) \
+                        and not all(v in ring for v in e.verts):
+                    edges.add(e)
+        if not edges:
+            break
+        bmesh.ops.dissolve_edges(bm, edges=list(edges), use_verts=False)
+        bm.normal_update()
+        fixed += len(edges)
+    return fixed
+
+
+def dissolve_ring_slivers(bm, ring, strips):
+    """Faces left lying entirely on an offset loop (slivers after welding) are merged into their
+    outer neighbour by dissolving the edge that isn't part of the loop strip."""
+    ring = {v for v in ring if v.is_valid}
+    strips = {f for f in strips if f.is_valid}
+    edges = set()
+    for f in {f for v in ring for f in v.link_faces}:
+        if f in strips or not all(v in ring for v in f.verts):
+            continue
+        for e in f.edges:
+            if not any(g in strips for g in e.link_faces) and len(e.link_faces) == 2:
+                edges.add(e)
+    if edges:
+        bmesh.ops.dissolve_edges(bm, edges=list(edges), use_verts=False)
+    return len(edges)
 
 
 # ----------------------------------------------------------------------------
@@ -280,6 +414,8 @@ sides (a clean strip of quads), clean up the offset, bevel, then fix the bevel""
     threshold: FloatProperty(name="Merge Distance", default=0.5, min=0.0, max=5.0, subtype='FACTOR',
                              description="Cleanup welds loop vertices closer than this (times the width) and "
                                          "stops there")
+    loop_slide: BoolProperty(name="Loop Slide", default=False,
+                             description="Offset along existing edges instead of straight across the surface")
     offset: FloatProperty(name="Offset", default=1.6, min=1.05, max=10.0,
                           description="Support loop distance from the intersection, times the width")
     offset_clean: FloatProperty(name="Offset Cleanup", default=0.3, min=0.0, max=1.0, subtype='FACTOR',
@@ -306,6 +442,7 @@ sides (a clean strip of quads), clean up the offset, bevel, then fix the bevel""
         sub.prop(self, "threshold", slider=True)
         col.separator()
         col.prop(self, "offset")
+        col.prop(self, "loop_slide")
         col.prop(self, "offset_clean", slider=True)
         col.prop(self, "fix_weld")
 
@@ -333,11 +470,16 @@ sides (a clean strip of quads), clean up the offset, bevel, then fix the bevel""
             for seq, cyclic, edges in loops:
                 a, b = split_sides(seq, edges)
                 protect = set(seq)
-                offs_a, strip_a, _ = offset_side(bm, seq, cyclic, edges, a, dist)
-                offs_b, strip_b, _ = offset_side(bm, seq, cyclic, edges, b, dist)
+                offs_a, strip_a, _ = offset_side(bm, seq, cyclic, edges, a, dist, loop_slide=self.loop_slide)
+                offs_b, strip_b, _ = offset_side(bm, seq, cyclic, edges, b, dist, loop_slide=self.loop_slide)
                 protect |= set(offs_a) | set(offs_b)
-                if self.offset_clean > 0:
-                    welded += clean_offset(bm, offs_a + offs_b, protect, self.offset_clean * self.width)
+                welded += clean_offset(bm, offs_a + offs_b, protect, self.offset_clean * self.width,
+                                       seq=seq, cyclic=cyclic, dist=dist, rings=(offs_a, offs_b))
+                dissolve_ring_slivers(bm, offs_a, strip_a)
+                dissolve_ring_slivers(bm, offs_b, strip_b)
+                bm.normal_update()
+                merge_folded(bm, offs_a, strip_a)
+                merge_folded(bm, offs_b, strip_b)
                 loop_edges_all += [bm.edges.get((seq[i], seq[(i + 1) % len(seq)]))
                                    for i in range(len(seq) if cyclic else len(seq) - 1)]
             near = {e for e in bm.edges if e.is_valid and e.calc_length() < self.width * 1e-3}
@@ -364,7 +506,7 @@ sides (a clean strip of quads), clean up the offset, bevel, then fix the bevel""
         st = fix.fix(bm, weld=self.fix_weld)
         bm.normal_update()
         bmesh.update_edit_mesh(me)
-        self.report({'INFO'}, "Cleanup merged %d, offset welded %d, fix: %d sides, %d welded"
+        self.report({'INFO'}, "Cleanup merged %d, offset cleaned %d, fix: %d sides, %d welded"
                     % (merged, welded, st["affected"], st["welded"]))
         return {'FINISHED'}
 
