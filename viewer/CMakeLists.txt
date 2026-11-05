@@ -22,6 +22,12 @@ target_compile_options(hbcore PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-m
 if(HBV_CLI_ONLY)
   add_executable(hb_convert src/cli_main.cpp)
   target_link_libraries(hb_convert hbcore)
+  # offscreen render test of the image view (Qt Widgets only)
+  find_package(Qt6 COMPONENTS Widgets)
+  if(Qt6Widgets_FOUND)
+    add_executable(hb_viewtest tests/viewtest.cpp src/imageview.cpp)
+    target_link_libraries(hb_viewtest hbcore Qt6::Widgets)
+  endif()
   return()
 endif()
 
