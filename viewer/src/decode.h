@@ -1,6 +1,7 @@
 #pragma once
 #include "image.h"
 #include <gdk-pixbuf/gdk-pixbuf.h>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -14,10 +15,12 @@ struct LoadResult {
 };
 
 // Decode 'path'. Images with more than budget_px pixels are decoded at 1/N size.
-std::unique_ptr<LoadResult> load_image(const std::string& path, uint64_t budget_px, LoadCtl& ctl);
+// on_preview (optional) receives a quick low-res result first for very large PSD/PSB files.
+std::unique_ptr<LoadResult> load_image(const std::string& path, uint64_t budget_px, LoadCtl& ctl,
+                                       const std::function<void(std::unique_ptr<LoadResult>)>& on_preview = nullptr);
 
 // PSD / PSB (Photoshop) merged-composite decoder. Returns false + r.error on failure.
-bool load_psd(const uint8_t* data, size_t len, uint64_t budget_px, LoadCtl& ctl, LoadResult& r);
+bool load_psd(const uint8_t* data, size_t len, uint64_t budget_px, LoadCtl& ctl, LoadResult& r, bool fast = false);
 
 // Copy a GdkPixbuf into a new Image (used for loaders and animation frames).
 std::unique_ptr<Image> image_from_pixbuf(GdkPixbuf* pb);

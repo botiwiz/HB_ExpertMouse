@@ -165,8 +165,10 @@ static bool load_raw_preview(const uint8_t* d, size_t n, uint64_t budget, LoadRe
     return true;
 }
 
-std::unique_ptr<LoadResult> load_image(const std::string& path, uint64_t budget, LoadCtl& ctl) {
+std::unique_ptr<LoadResult> load_image(const std::string& path, uint64_t budget, LoadCtl& ctl,
+                                       const std::function<void(std::unique_ptr<LoadResult>)>& on_preview) {
     auto r = std::make_unique<LoadResult>();
+    budget = std::max<uint64_t>(budget, 1000000);
     GError* err = nullptr;
     GMappedFile* mf = g_mapped_file_new(path.c_str(), FALSE, &err);
     if (!mf) { r->error = err ? err->message : "cannot open file"; if (err) g_error_free(err); return r; }
@@ -175,7 +177,18 @@ std::unique_ptr<LoadResult> load_image(const std::string& path, uint64_t budget,
     std::string ext = lower_ext(path);
     bool ok = false;
     if (n < 8) r->error = "file too small";
-    else if (!memcmp(d, "8BPS", 4)) ok = load_psd(d, n, budget, ctl, *r);
+    else if (!memcmp(d, "8BPS", 4)) {
+        // big file: show a fast row-sampled preview (~4 MP) before the full decode
+        if (on_preview && n > 8 && n >= 26) {
+            uint64_t ph = (uint64_t)d[14] << 24 | d[15] << 16 | d[16] << 8 | d[17], pw = (uint64_t)d[18] << 24 | d[19] << 16 | d[20] << 8 | d[21];
+            if (pw * ph > 40000000ull && budget > 4000000ull) {
+                auto p = std::make_unique<LoadResult>();
+                LoadCtl pc;
+                if (load_psd(d, n, 4000000ull, pc, *p, true) && !ctl.cancel) on_preview(std::move(p));
+            }
+        }
+        ok = !ctl.cancel && load_psd(d, n, budget, ctl, *r);
+    }
     else if (kRaw.count(ext)) {
         ok = (ext == "dng" && load_pixbuf(path, budget, *r)) || load_raw_preview(d, n, budget, *r);
     } else if (kStb.count(ext)) {

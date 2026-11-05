@@ -85,7 +85,8 @@ void Image::put_rgba(int y, const uint8_t* src, int n, int ch) {
         int cnt = std::min(T - tx, end - x);
         const uint8_t* sp = src + (size_t)x * ch;
         if (ch == 4) memcpy(d, sp, (size_t)cnt * 4);
-        else for (int i = 0; i < cnt; i++) { d[i*4] = sp[i*3]; d[i*4+1] = sp[i*3+1]; d[i*4+2] = sp[i*3+2]; d[i*4+3] = 255; }
+        else
+            for (int i = 0; i < cnt; i++) { d[i*4] = sp[i*3]; d[i*4+1] = sp[i*3+1]; d[i*4+2] = sp[i*3+2]; d[i*4+3] = 255; }
         x += cnt;
     }
 }
@@ -105,6 +106,59 @@ static void lab_to_rgb(uint8_t L8, uint8_t A8, uint8_t B8, uint8_t* rgb) {
     rgb[0] = clamp8(enc(r) * 255); rgb[1] = clamp8(enc(g) * 255); rgb[2] = clamp8(enc(bl) * 255);
 }
 
+void convert_pixels(RawLayout layout, bool alpha, bool unmatte, const uint8_t* pal,
+                    const uint8_t* const ch[4], int stride, uint8_t* out, int n) {
+    // fast paths for the common cases
+    if (layout == RawLayout::RGBA && !alpha) {
+        const uint8_t *r = ch[0], *g = ch[1], *b = ch[2];
+        uint32_t* o = (uint32_t*)out;
+        if (stride == 1) for (int x = 0; x < n; x++) o[x] = 0xFF000000u | (uint32_t)r[x] << 16 | (uint32_t)g[x] << 8 | b[x];
+        else for (int x = 0; x < n; x++) { size_t i = (size_t)x * stride; o[x] = 0xFF000000u | (uint32_t)r[i] << 16 | (uint32_t)g[i] << 8 | b[i]; }
+        return;
+    }
+    if ((layout == RawLayout::Gray || layout == RawLayout::GrayA) && !alpha && stride == 1) {
+        uint32_t* o = (uint32_t*)out;
+        for (int x = 0; x < n; x++) o[x] = 0xFF000000u | ch[0][x] * 0x010101u;
+        return;
+    }
+    for (int x = 0; x < n; x++) {
+        size_t o = (size_t)x * stride;
+        uint8_t r, g, b, a = 255;
+        switch (layout) {
+        case RawLayout::RGBA:  r = ch[0][o]; g = ch[1][o]; b = ch[2][o]; if (alpha) a = ch[3][o]; break;
+        case RawLayout::Gray:  r = g = b = ch[0][o]; break;
+        case RawLayout::GrayA: r = g = b = ch[0][o]; if (alpha) a = ch[1][o]; break;
+        case RawLayout::Indexed: { uint8_t i = ch[0][o]; r = pal[i]; g = pal[256 + i]; b = pal[512 + i]; break; }
+        case RawLayout::CMYK: {  // Photoshop stores CMYK inverted (255 = no ink)
+            unsigned k = ch[3][o];
+            r = (uint8_t)(ch[0][o] * k / 255); g = (uint8_t)(ch[1][o] * k / 255); b = (uint8_t)(ch[2][o] * k / 255); break; }
+        case RawLayout::Lab:
+        case RawLayout::LabA: { uint8_t c[3]; lab_to_rgb(ch[0][o], ch[1][o], ch[2][o], c); r = c[0]; g = c[1]; b = c[2];
+            if (alpha && layout == RawLayout::LabA) a = ch[3][o]; break; }
+        default: r = g = b = 0;
+        }
+        if (alpha && unmatte && a > 0 && a < 255) {
+            auto um = [a](uint8_t c) { int v = ((int)c - 255 + a) * 255 / a; return (uint8_t)std::clamp(v, 0, 255); };
+            r = um(r); g = um(g); b = um(b);
+        }
+        uint8_t* p = out + (size_t)x * 4;
+        if (a == 255) { p[0] = b; p[1] = g; p[2] = r; p[3] = 255; }
+        else { p[0] = (uint8_t)((b * a + 127) / 255); p[1] = (uint8_t)((g * a + 127) / 255);
+               p[2] = (uint8_t)((r * a + 127) / 255); p[3] = a; }
+    }
+}
+
+void Image::put_bgra(int y, const uint8_t* src, int n) {
+    const Level& l = lv[0];
+    int r = y / T, ty = y % T;
+    for (int x = 0, end = std::min(n, l.w); x < end;) {
+        int c = x / T, tx = x % T, cnt = std::min(T - tx, end - x);
+        cairo_surface_t* s = l.tile(c, r);
+        memcpy(cairo_image_surface_get_data(s) + (size_t)ty * cairo_image_surface_get_stride(s) + tx * 4, src + (size_t)x * 4, (size_t)cnt * 4);
+        x += cnt;
+    }
+}
+
 void Image::finalize(RawLayout layout, bool alpha, bool unmatte, const uint8_t* pal) {
     has_alpha = alpha;
     Level& l = lv[0];
@@ -116,28 +170,8 @@ void Image::finalize(RawLayout layout, bool alpha, bool unmatte, const uint8_t* 
         uint8_t* base = cairo_image_surface_get_data(s);
         for (int y = 0; y < h; y++) {
             uint8_t* p = base + (size_t)y * stride;
-            for (int x = 0; x < w; x++, p += 4) {
-                uint8_t r, g, b, a = 255;
-                switch (layout) {
-                case RawLayout::RGBA:  r = p[0]; g = p[1]; b = p[2]; if (alpha) a = p[3]; break;
-                case RawLayout::Gray:  r = g = b = p[0]; break;
-                case RawLayout::GrayA: r = g = b = p[0]; if (alpha) a = p[1]; break;
-                case RawLayout::Indexed: r = pal[p[0]]; g = pal[256 + p[0]]; b = pal[512 + p[0]]; break;
-                case RawLayout::CMYK:  // Photoshop stores CMYK inverted (255 = no ink)
-                    r = (uint8_t)(p[0] * p[3] / 255); g = (uint8_t)(p[1] * p[3] / 255); b = (uint8_t)(p[2] * p[3] / 255); break;
-                case RawLayout::Lab:
-                case RawLayout::LabA: { uint8_t c[3]; lab_to_rgb(p[0], p[1], p[2], c); r = c[0]; g = c[1]; b = c[2];
-                    if (alpha && layout == RawLayout::LabA) a = p[3]; break; }
-                default: r = g = b = 0;
-                }
-                if (alpha && unmatte && a > 0 && a < 255) {
-                    auto um = [a](uint8_t c) { int v = ((int)c - 255 + a) * 255 / a; return (uint8_t)std::clamp(v, 0, 255); };
-                    r = um(r); g = um(g); b = um(b);
-                }
-                if (a == 255) { p[0] = b; p[1] = g; p[2] = r; p[3] = 255; }
-                else { p[0] = (uint8_t)((b * a + 127) / 255); p[1] = (uint8_t)((g * a + 127) / 255);
-                       p[2] = (uint8_t)((r * a + 127) / 255); p[3] = a; }
-            }
+            const uint8_t* ch[4] = {p, p + 1, p + 2, p + 3};
+            convert_pixels(layout, alpha, unmatte, pal, ch, 4, p, w);   // in place: reads a pixel before writing it
         }
         cairo_surface_mark_dirty(s);
     });
@@ -170,8 +204,15 @@ void Image::build_mips() {
                     const uint8_t* s0 = sb + (size_t)(2 * y) * ss;
                     const uint8_t* s1 = s0 + ss;
                     uint8_t* dp = db + (size_t)(oy + y) * ds + ox * 4;
-                    for (int x = 0; x < sw / 2 && ox + x < dw; x++, dp += 4, s0 += 8, s1 += 8)
-                        for (int k = 0; k < 4; k++) dp[k] = (uint8_t)((s0[k] + s0[k + 4] + s1[k] + s1[k + 4] + 2) >> 2);
+                    const uint32_t* a0 = (const uint32_t*)s0; const uint32_t* a1 = (const uint32_t*)s1;
+                    uint32_t* o = (uint32_t*)dp;
+                    int nx = std::min(sw / 2, dw - ox);
+                    for (int x = 0; x < nx; x++) {      // average 2x2 pixels, two 8-bit lanes per 32-bit op
+                        uint32_t p0 = a0[2 * x], p1 = a0[2 * x + 1], p2 = a1[2 * x], p3 = a1[2 * x + 1];
+                        uint32_t lo = (p0 & 0x00FF00FF) + (p1 & 0x00FF00FF) + (p2 & 0x00FF00FF) + (p3 & 0x00FF00FF) + 0x00020002;
+                        uint32_t hi = (p0 >> 8 & 0x00FF00FF) + (p1 >> 8 & 0x00FF00FF) + (p2 >> 8 & 0x00FF00FF) + (p3 >> 8 & 0x00FF00FF) + 0x00020002;
+                        o[x] = (lo >> 2 & 0x00FF00FF) | (hi >> 2 & 0x00FF00FF) << 8;
+                    }
                 }
             }
             cairo_surface_mark_dirty(d);

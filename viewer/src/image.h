@@ -28,6 +28,8 @@ public:
 
     // Write src[0..n) into byte 'slot' (0..3) of pixels (x0.., y) of level 0.
     void put_channel(int y, int x0, int slot, const uint8_t* src, int n);
+    // Write n already-converted (premultiplied BGRA) pixels into row y of level 0.
+    void put_bgra(int y, const uint8_t* src, int n);
     // Write n RGBA (or RGB when ch==3) pixels into row y of level 0.
     void put_rgba(int y, const uint8_t* src, int n, int ch);
 
@@ -50,6 +52,7 @@ struct ImageInfo {
     std::string details;       // colour mode, depth, layers ...
     int orig_w = 0, orig_h = 0;
     int scale_div = 1;         // decoded at 1/scale_div because of the memory budget
+    bool preview = false;      // quick low-res pass; full decode still running
 };
 
 struct LoadCtl {
@@ -58,3 +61,7 @@ struct LoadCtl {
 };
 
 unsigned hw_threads();
+
+// Convert one row of raw channel bytes (ch[k][x*stride]) to premultiplied BGRA.
+void convert_pixels(RawLayout layout, bool alpha, bool unmatte, const uint8_t* pal,
+                    const uint8_t* const ch[4], int stride, uint8_t* out, int n);

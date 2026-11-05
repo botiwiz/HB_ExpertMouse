@@ -7,6 +7,8 @@
 #include <cmath>
 #include <cstring>
 #include <thread>
+#include <chrono>
+#include <cstdio>
 
 namespace {
 
@@ -45,7 +47,7 @@ const char* mode_name(int m) {
 
 } // namespace
 
-bool load_psd(const uint8_t* data, size_t len, uint64_t budget, LoadCtl& ctl, LoadResult& r) {
+bool load_psd(const uint8_t* data, size_t len, uint64_t budget, LoadCtl& ctl, LoadResult& r, bool fast) {
     Reader rd{data, len};
     if (rd.be(4) != 0x38425053) { r.error = "not a PSD"; return false; }   // "8BPS"
     int ver = (int)rd.be(2);
@@ -118,6 +120,8 @@ bool load_psd(const uint8_t* data, size_t len, uint64_t budget, LoadCtl& ctl, Lo
     while ((uint64_t)((w + s - 1) / s) * ((h + s - 1) / s) > budget) s++;
     int ow = (int)((w + s - 1) / s), oh = (int)((h + s - 1) / s);
 
+    auto T0 = std::chrono::steady_clock::now();
+    auto TM = [&](const char* w) { if (getenv("HBV_TIMING")) fprintf(stderr, "  %s %.3f\n", w, std::chrono::duration<double>(std::chrono::steady_clock::now() - T0).count()); };
     r.img = std::make_unique<Image>();
     if (!r.img->alloc(ow, oh)) { r.error = "out of memory"; r.img.reset(); return false; }
 
@@ -129,75 +133,84 @@ bool load_psd(const uint8_t* data, size_t len, uint64_t budget, LoadCtl& ctl, Lo
             lin2srgb[i] = (uint8_t)std::lround(255 * (c <= 0.0031308f ? 12.92f * c : 1.055f * powf(c, 1 / 2.4f) - 0.055f)); }
     }
 
+    if (mode == 0 || mode == 2) alpha = false;
     std::atomic<uint64_t> done_rows{0};
-    std::atomic<bool> fail{false};
-    uint64_t total_rows = (uint64_t)ndec * h;
+    uint64_t total_rows = (uint64_t)oh;
     unsigned nthreads = hw_threads();
-    int nbands = std::max(1, std::min(oh, (int)nthreads * 4));
+    int nbands = std::max(1, std::min(oh, (int)nthreads * 8));
     std::atomic<int> next_band{0};
 
+    // Each output row: decode (s input rows of) every channel, box-filter, convert to
+    // premultiplied BGRA and write it once. 'fast' (preview) samples one input row per s.
     auto worker = [&] {
-        std::vector<uint8_t> packed(rowbytes), line(w), out(ow);
+        std::vector<uint8_t> packed(rowbytes), line(w), bgra((size_t)ow * 4);
+        std::vector<uint8_t> chl[4];
+        for (auto& c : chl) c.assign(ow, 0);
         std::vector<uint32_t> acc(ow);
-        for (int b; (b = next_band++) < nbands && !ctl.cancel && !fail;) {
+        const uint8_t* chp[4] = {chl[0].data(), chl[1].data(), chl[2].data(), chl[3].data()};
+        for (int b; (b = next_band++) < nbands && !ctl.cancel;) {
             int oy0 = (int)((int64_t)oh * b / nbands), oy1 = (int)((int64_t)oh * (b + 1) / nbands);
-            for (int ch = 0; ch < ndec; ch++) {
-                bool is_alpha = ch >= nbase;
-                for (int oy = oy0; oy < oy1 && !ctl.cancel; oy++) {
-                    int y0 = oy * s, y1 = std::min<int>(y0 + s, (int)h);
+            for (int oy = oy0; oy < oy1 && !ctl.cancel; oy++) {
+                int y0 = oy * s, y1 = std::min<int>(y0 + s, (int)h);
+                if (fast) y1 = y0 + 1;
+                for (int ch = 0; ch < ndec; ch++) {
+                    bool is_alpha = ch >= nbase;
+                    uint8_t* dst = s == 1 ? chl[ch].data() : line.data();
                     if (s > 1) std::fill(acc.begin(), acc.end(), 0);
                     for (int y = y0; y < y1; y++) {
                         size_t i = (size_t)ch * h + y;
                         const uint8_t* src = data + off[i];
                         const uint8_t* row;
-                        if (comp == 1) { unpackbits(src, sz[i], packed.data(), rowbytes); row = packed.data(); }
-                        else row = src;
-                        // to 8-bit
+                        if (comp == 1) {
+                            if (depth == 8) { unpackbits(src, sz[i], dst, w); row = dst; }
+                            else { unpackbits(src, sz[i], packed.data(), rowbytes); row = packed.data(); }
+                        } else row = src;
                         switch (depth) {
-                        case 1: for (uint32_t x = 0; x < w; x++) line[x] = (row[x >> 3] >> (7 - (x & 7)) & 1) ? 0 : 255; break;
-                        case 8: memcpy(line.data(), row, w); break;
-                        case 16: for (uint32_t x = 0; x < w; x++) line[x] = row[2 * x]; break;
+                        case 1: for (uint32_t x = 0; x < w; x++) dst[x] = (row[x >> 3] >> (7 - (x & 7)) & 1) ? 0 : 255; break;
+                        case 8: if (row != dst) memcpy(dst, row, w); break;
+                        case 16: for (uint32_t x = 0; x < w; x++) dst[x] = row[2 * x]; break;
                         case 32: for (uint32_t x = 0; x < w; x++) {
                             uint32_t u = (uint32_t)row[4*x] << 24 | row[4*x+1] << 16 | row[4*x+2] << 8 | row[4*x+3];
                             float f; memcpy(&f, &u, 4);
                             f = std::isfinite(f) ? std::clamp(f, 0.f, 1.f) : 0.f;
-                            line[x] = is_alpha ? (uint8_t)std::lround(f * 255) : lin2srgb[(int)(f * 4096)];
+                            dst[x] = is_alpha ? (uint8_t)std::lround(f * 255) : lin2srgb[(int)(f * 4096)];
                         } break;
                         }
-                        if (s == 1) break;
-                        for (int ox = 0; ox < ow; ox++) {
-                            uint32_t sum = 0; int x0 = ox * s, x1 = std::min<int>(x0 + s, (int)w);
-                            for (int x = x0; x < x1; x++) sum += line[x];
-                            acc[ox] += sum;
-                        }
+                        if (s > 1)
+                            for (int ox = 0, x0 = 0; ox < ow; ox++, x0 += s) {
+                                uint32_t sum = 0; int x1 = std::min<int>(x0 + s, (int)w);
+                                for (int x = x0; x < x1; x++) sum += dst[x];
+                                acc[ox] += sum;
+                            }
                     }
-                    if (s == 1) r.img->put_channel(oy, 0, ch, line.data(), ow);
-                    else {
+                    if (s > 1) {
                         int ny = y1 - y0;
                         for (int ox = 0; ox < ow; ox++) {
-                            int nx = std::min<int>(ox * s + s, (int)w) - ox * s;
-                            out[ox] = (uint8_t)((acc[ox] + nx * ny / 2) / (nx * ny));
+                            int n = (std::min<int>(ox * s + s, (int)w) - ox * s) * ny;
+                            chl[ch][ox] = (uint8_t)((acc[ox] + n / 2) / n);
                         }
-                        r.img->put_channel(oy, 0, ch, out.data(), ow);
                     }
-                    uint64_t d = (done_rows += (y1 - y0));
-                    ctl.progress = (int)(d * 950 / total_rows);
                 }
+                convert_pixels(layout, alpha, alpha, mode == 2 ? pal : nullptr, chp, 1, bgra.data(), ow);
+                r.img->put_bgra(oy, bgra.data(), ow);
+                ctl.progress = (int)(++done_rows * 950 / total_rows);
             }
         }
     };
     std::vector<std::thread> th;
     for (unsigned t = 0; t < nthreads; t++) th.emplace_back(worker);
+    TM("alloc");
     for (auto& t : th) t.join();
+    TM("decode");
     if (ctl.cancel) { r.img.reset(); r.error = "cancelled"; return false; }
-
-    if (mode == 0 || mode == 2) alpha = false;
-    r.img->finalize(layout, alpha, alpha, mode == 2 ? pal : nullptr);
+    r.img->has_alpha = alpha;
+    for (auto* t : r.img->lv[0].tiles) cairo_surface_mark_dirty(t);
     r.img->build_mips();
+    TM("mips");
     ctl.progress = 1000;
 
     r.info.format = psb ? "PSB" : "PSD";
-    r.info.orig_w = (int)w; r.info.orig_h = (int)h; r.info.scale_div = s;
+    r.info.orig_w = (int)w; r.info.orig_h = (int)h; r.info.scale_div = s; r.info.preview = fast;
     r.info.details = std::string(mode_name(mode)) + ", " + std::to_string(depth) + "-bit, " +
                      std::to_string(nch) + " ch" + (alpha ? " (alpha)" : "") +
                      ", " + std::to_string(std::abs(layer_count)) + " layers" + (comp ? ", RLE" : ", raw");
