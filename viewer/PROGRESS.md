@@ -27,6 +27,14 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
        f3d::engine::createExternal(); bundle prebuilt libf3d (+VTK) in the AppImage.
        Currently: 3D files are listed in the folder, "D" launches external f3d.
 
+## In progress: Browser mode (user request: like Imagine, but show ALL file types)
+- Plan: src/thumbs.* (thumbnail gen + freedesktop cache ~/.cache/thumbnails/large, worker pool,
+  visible-first priority), src/browser.* (folder tree | path bar + GtkIconView of all files,
+  folders first; non-images get content-type icons; cached thumbs from file managers reused).
+- Tab toggles browser/viewer; double-click image -> viewer; Esc in viewer -> back to browser;
+  other files -> default app. Commands act on browser selection (rename/trash/info/open with...).
+- Start in browser when launched without a file (or with a folder).
+
 ## Ideas / TODO
 - Re-decode the visible region at full resolution when zooming into a downscaled huge PSD.
 - PSD without "Maximize compatibility": composite layers ourselves (normal blend + opacity).
