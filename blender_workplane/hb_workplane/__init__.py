@@ -18,9 +18,9 @@ bl_info = {
 import bpy
 from bpy.props import BoolProperty
 
-from . import props, ops, draw, ui
+from . import props, ops, gridmove, draw, ui
 
-_modules = (props, ops, draw, ui)
+_modules = (props, ops, gridmove, draw, ui)
 _keymaps = []  # (keymap, keymap_item)
 
 # (keymap name, operator, key args, properties)
@@ -33,7 +33,7 @@ KEYS_TRANSFORM = tuple(
     item for km in TRANSFORM_KEYMAPS for item in (
         (km, "hb_workplane.move", {"type": 'G', "value": 'PRESS'}, {}),
         (km, "hb_workplane.rotate", {"type": 'R', "value": 'PRESS'}, {}),
-    ))
+    )) + (("Mesh", "hb_workplane.extrude", {"type": 'E', "value": 'PRESS'}, {}),)
 
 
 def _register_keymaps():
@@ -75,8 +75,8 @@ class HBWorkplanePreferences(bpy.types.AddonPreferences):
     bl_idname = __package__
 
     override_transform_keys: BoolProperty(
-        name="Constrain G / R", default=True, update=_update_keys,
-        description="Make G (Move) and R (Rotate) follow the workplane. "
+        name="Constrain G / R / E", default=True, update=_update_keys,
+        description="Make G (Move), R (Rotate) and E (Extrude) follow the workplane. "
                     "The toggles in the sidebar can switch this per scene")
 
     def draw(self, context):

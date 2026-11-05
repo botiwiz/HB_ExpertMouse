@@ -225,6 +225,8 @@ class HB_WORKPLANE_OT_move(bpy.types.Operator):
         s = context.scene.hb_workplane
         if not (s.enabled and s.constrain_move):
             return _wrap(bpy.ops.transform.translate('INVOKE_DEFAULT'))
+        if s.grid_snap and context.mode in {'OBJECT', 'EDIT_MESH'}:
+            return _wrap(bpy.ops.hb_workplane.grid_move('INVOKE_DEFAULT', axis='PLANE'))
         m = current_matrix(context)
         return _wrap(bpy.ops.transform.translate('INVOKE_DEFAULT', constraint_axis=(True, True, False),
                                                  **_orient_kwargs(m)))
@@ -245,7 +247,38 @@ class HB_WORKPLANE_OT_rotate(bpy.types.Operator):
                                               constraint_axis=(False, False, True), **_orient_kwargs(m)))
 
 
-classes = (HB_WORKPLANE_OT_set, HB_WORKPLANE_OT_clear, HB_WORKPLANE_OT_cursor_to_workplane,
+class HB_WORKPLANE_OT_extrude(bpy.types.Operator):
+    """Extrude: vertices/edges move along the workplane, faces along its normal
+(each can be switched off in the sidebar to get Blender's normal extrude)"""
+    bl_idname = "hb_workplane.extrude"
+    bl_label = "Extrude (Workplane)"
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'EDIT_MESH'
+
+    def invoke(self, context, event):
+        import bmesh
+        s = context.scene.hb_workplane
+        has_faces = any(f.select for o in (context.objects_in_mode or [])
+                        if o.type == 'MESH' for f in bmesh.from_edit_mesh(o.data).faces)
+        use = s.enabled and (s.constrain_extrude_face if has_faces else s.constrain_extrude_vert)
+        if not use:
+            return _wrap(bpy.ops.view3d.edit_mesh_extrude_move_normal('INVOKE_DEFAULT'))
+        axis = 'NORMAL' if has_faces else 'PLANE'
+        if s.grid_snap:
+            if bpy.ops.mesh.extrude_region() == {'CANCELLED'}:
+                return {'CANCELLED'}
+            return _wrap(bpy.ops.hb_workplane.grid_move('INVOKE_DEFAULT', axis=axis))
+        m = current_matrix(context)
+        constraint = (False, False, True) if has_faces else (True, True, False)
+        return _wrap(bpy.ops.mesh.extrude_region_move(
+            'INVOKE_DEFAULT',
+            TRANSFORM_OT_translate=dict(constraint_axis=constraint, **_orient_kwargs(m))))
+
+
+classes = (HB_WORKPLANE_OT_set, HB_WORKPLANE_OT_extrude, HB_WORKPLANE_OT_clear, HB_WORKPLANE_OT_cursor_to_workplane,
            HB_WORKPLANE_OT_move, HB_WORKPLANE_OT_rotate)
 
 

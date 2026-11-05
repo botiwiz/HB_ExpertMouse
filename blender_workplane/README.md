@@ -15,8 +15,20 @@ Edit > Preferences > Get Extensions > ⌄ (top right) > **Install from Disk…**
 |---|---|
 | **Space** | Set the workplane: from the selected face(s) in Edit Mode, otherwise from the face under the mouse. Press again on the same plane (or over empty space) to go back to automatic |
 | **Alt+Space** | Back to the automatic plane |
-| **G** | Move, constrained to the workplane (X/Y/Z during the move still work as usual) |
+| **G** | Move along the workplane, snapping to its grid (see below) |
 | **R** | Rotate around the workplane normal |
+| **E** (Edit Mode) | Extrude: vertices/edges move along the workplane; faces along the workplane normal (*Face* toggle, off by default → Blender's normal extrude) |
+
+### Grid snapping (on by default)
+While moving (G) or extruding (E) in Object Mode or Mesh Edit Mode:
+- the active vertex / active object (else the selection's center) lands on grid intersections of the workplane;
+  extruded faces grow in whole grid steps along the normal
+- **Ctrl**: snap off while held · **X / Y**: lock to the workplane's X / Y axis · **Z**: along the normal
+  (press again to unlock) · **LMB / Enter**: confirm · **RMB / Esc**: cancel
+- Spacing: *Adaptive* (follows the zoom, same as the drawn grid) or *Fixed* (e.g. 10 mm);
+  *Snap Subdivisions* snaps to fractions of a grid square
+- With Grid Snap off, G uses Blender's own move constrained to the plane (X/Y/Z work as usual);
+  other modes (curves, armatures…) always use that
 
 - **Automatic mode** (no plane set): the world plane (XY / XZ / YZ) that faces the view is used,
   and switches as you orbit. *Ground Bias* in the sidebar controls how much the floor is preferred.

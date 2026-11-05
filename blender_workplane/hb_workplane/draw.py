@@ -14,6 +14,8 @@ Z_COLOR = (0.2, 0.55, 1.0)
 SEGMENTS = 12
 
 _handle = None
+# Set by the grid move operator while it runs.
+state = {"snap_point": None, "snap_step": 0.0, "snap_matrix": None}
 
 
 def grid_geometry(base, center, step, n, opacity, color):
@@ -72,6 +74,9 @@ def grid_frame(context, rv3d):
 
 
 def grid_step(context, rv3d):
+    s = context.scene.hb_workplane
+    if s.spacing_mode == 'FIXED':
+        return s.spacing
     us = context.scene.unit_settings
     scale = us.scale_length if us.system != 'NONE' else 1.0
     raw = max(rv3d.view_distance, 1e-6) / 8.0 * scale
@@ -117,6 +122,19 @@ def draw_view(context=None, region=None, rv3d=None):
         shader.uniform_float("lineWidth", 2.0)
         nb.draw(shader)
 
+    sp = state["snap_point"]
+    if sp is not None and state["snap_matrix"] is not None:  # snapped point marker
+        rot = state["snap_matrix"].to_3x3().normalized()
+        r = max(state["snap_step"], 1e-6) * 0.6
+        gpu.state.depth_test_set('NONE')
+        pts, cols = [], []
+        for ax, c in ((rot.col[0], X_COLOR), (rot.col[1], Y_COLOR)):
+            pts += [tuple(sp - ax * r), tuple(sp + ax * r)]
+            cols += [(1, 1, 1, 1), (1, 1, 1, 1)]
+        mb = batch_for_shader(shader, 'LINES', {"pos": pts, "color": cols})
+        shader.uniform_float("lineWidth", 2.5)
+        mb.draw(shader)
+
     gpu.state.depth_test_set('NONE')
     gpu.state.depth_mask_set(True)
     gpu.state.blend_set('NONE')
@@ -132,3 +150,5 @@ def unregister():
     if _handle is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_handle, 'WINDOW')
         _handle = None
+# Set by the grid move operator while it runs.
+state = {"snap_point": None, "snap_step": 0.0, "snap_matrix": None}

@@ -43,6 +43,22 @@ class HBWorkplaneSettings(PropertyGroup):
                                     default=(0.85, 0.85, 0.85), update=_redraw)
     occlude: BoolProperty(name="Hide Behind Geometry", default=False, update=_redraw)
 
+    constrain_extrude_vert: BoolProperty(name="Vert/Edge", default=True,
+                                         description="Extruded vertices/edges move along the workplane")
+    constrain_extrude_face: BoolProperty(name="Face", default=False,
+                                         description="Extruded faces move along the workplane normal")
+    grid_snap: BoolProperty(name="Grid Snap", default=True,
+                            description="Move/Extrude snap to the workplane grid (hold Ctrl to move freely). "
+                                        "Object Mode and Mesh Edit Mode")
+    spacing_mode: EnumProperty(name="Spacing", items=(
+        ('ADAPTIVE', "Adaptive", "Grid spacing follows the zoom level (1/2/5 steps)"),
+        ('FIXED', "Fixed", "Use a fixed grid spacing"),
+    ), default='ADAPTIVE', update=_redraw)
+    spacing: FloatProperty(name="Grid Spacing", min=1e-6, default=0.1, subtype='DISTANCE', unit='LENGTH',
+                           update=_redraw)
+    subdivisions: IntProperty(name="Snap Subdivisions", min=1, max=10, default=1,
+                              description="Snap to this many divisions of each grid square")
+
 
 def register():
     bpy.utils.register_class(HBWorkplaneSettings)

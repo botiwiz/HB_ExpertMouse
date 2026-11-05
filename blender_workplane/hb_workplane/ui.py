@@ -37,7 +37,20 @@ class VIEW3D_PT_hb_workplane(bpy.types.Panel):
         row = col.row(align=True)
         row.prop(s, "constrain_move", toggle=True, icon='EMPTY_ARROWS')
         row.prop(s, "constrain_rotate", toggle=True, icon='DRIVER_ROTATIONAL_DIFFERENCE')
+        col = layout.column(heading="Extrude")
+        row = col.row(align=True)
+        row.prop(s, "constrain_extrude_vert", toggle=True, icon='VERTEXSEL')
+        row.prop(s, "constrain_extrude_face", toggle=True, icon='FACESEL')
         layout.prop(s, "sync_orientation")
+
+        box = layout.box()
+        box.prop(s, "grid_snap", icon='SNAP_GRID')
+        col = box.column()
+        col.active = s.grid_snap
+        col.prop(s, "spacing_mode", expand=True)
+        if s.spacing_mode == 'FIXED':
+            col.prop(s, "spacing")
+        col.prop(s, "subdivisions")
 
 
 class VIEW3D_PT_hb_workplane_grid(bpy.types.Panel):
