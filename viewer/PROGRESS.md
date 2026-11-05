@@ -23,6 +23,17 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - src/main.cpp  GTK UI, commands, favorites, loading jobs + cache/preload, --convert CLI
 - build.sh, build-appimage.sh, appdir/, CI job `viewer-appimage` in .github/workflows/build.yml
 
+## IN PROGRESS: switch to Qt6/KF6 + embedded Dolphin (user chose "Embed Dolphin", user runs Plasma 6)
+- Browser = DolphinPart (KParts, plugin kf6/parts/dolphinpart) like Konqueror; host handles
+  NavigationExtension::openUrlRequest: dir -> part->openUrl, image/3D -> our viewer, else KIO::OpenUrlJob.
+  Context menu: NavigationExtension::popupMenu -> KFileItemActions + part edit actions + our commands.
+  Places (KFilePlacesView) + KUrlNavigator breadcrumb. Dark: KColorSchemeManager "BreezeDark" + fallback palette.
+- Core kept: image (tiles now plain buffers = QImage ARGB32_Premultiplied layout), psd.cpp, stb;
+  gdk-pixbuf -> QImageReader (+ KImageFormats on Plasma). GTK browser/thumbs dropped (Dolphin does thumbnails).
+- Build: CMake+ECM. Sandbox has no KF6 (mirrors blocked, no docker daemon) -> CI job in debian:trixie
+  container builds + runs `--selftest` under xvfb. Locally only the CLI (-DHBV_CLI_ONLY=ON, Qt6 base) for PSD tests.
+- AppImage contains only our binary; uses system Qt6/KF6/Dolphin (needs glibc/Qt/KF6 >= trixie's - inferred).
+
 ## Phases
 1. [x] Image viewer core – done, tested (PSD all modes pixel-exact vs reference, 40000x30000 PSB, GUI under Xvfb)
 2. [ ] 3D mesh viewer via libf3d (https://github.com/f3d-app/f3d): embed in a GtkGLArea using
