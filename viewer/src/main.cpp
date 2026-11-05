@@ -1,6 +1,7 @@
 // HB Viewer - lightweight image viewer for huge PSD/PSB and common formats.
 // Every function is a Command in one table: it feeds the right-click menu, the keyboard
 // shortcuts and the Favorites toolbar (right-click any menu item to pin/unpin it).
+#include "browser.h"
 #include "decode.h"
 #include <gtk/gtk.h>
 #include <glib/gstdio.h>
@@ -30,7 +31,7 @@ struct Command {
 static std::vector<Command> cmds;
 struct Alias { guint key; GdkModifierType mods; const char* id; };
 static std::vector<Alias> aliases;
-static const char* kGroups[] = {"File", "Navigate", "View", "Image", "3D", "Favorites", "Help"};
+static const char* kGroups[] = {"File", "Navigate", "Browser", "View", "Image", "3D", "Favorites", "Help"};
 
 static int cmd_index(const std::string& id) {
     for (size_t i = 0; i < cmds.size(); i++) if (id == cmds[i].id) return (int)i;
@@ -65,6 +66,8 @@ static struct App {
     int bg = BG_DARK;
     bool smooth = true, wheel_zoom = true, fit_on_open = true, loop_dir = true, confirm_delete = true;
     bool show_toolbar = true, show_status = true, fullscreen = false, on_top = false;
+    bool browser = false, from_browser = false;
+    GtkWidget* stack = nullptr;
     int slideshow_ms = 3000; guint slideshow_id = 0;
     uint64_t budget_px = 0;
     std::vector<std::string> favs;
@@ -115,7 +118,7 @@ static void load_settings() {
     gsize n = 0;
     gchar** f = g_key_file_get_string_list(A.ini, "favorites", "commands", &n, nullptr);
     if (f) { for (gsize k = 0; k < n; k++) A.favs.push_back(f[k]); g_strfreev(f); }
-    else A.favs = {"open", "prev", "next", "zoom_fit", "zoom_100", "zoom_in", "zoom_out", "rotate_left", "rotate_right", "fullscreen", "info"};
+    else A.favs = {"browser", "open", "prev", "next", "zoom_fit", "zoom_100", "zoom_in", "zoom_out", "rotate_left", "rotate_right", "fullscreen", "info"};
 }
 
 static void save_settings() {
@@ -138,11 +141,25 @@ static void save_settings() {
         g_key_file_set_integer(A.ini, "window", "height", h);
         g_key_file_set_boolean(A.ini, "window", "maximized", gtk_window_is_maximized(GTK_WINDOW(A.win)));
     }
+    if (A.stack) {
+        g_key_file_set_integer(A.ini, "browser", "thumb_size", browser_thumb_size());
+        g_key_file_set_integer(A.ini, "browser", "sort", browser_sort());
+        g_key_file_set_boolean(A.ini, "browser", "reverse", browser_reverse());
+        g_key_file_set_boolean(A.ini, "browser", "show_hidden", browser_hidden());
+        g_key_file_set_integer(A.ini, "browser", "tree_width", browser_pane_pos());
+        if (!browser_folder().empty()) g_key_file_set_string(A.ini, "browser", "folder", browser_folder().c_str());
+    }
     g_key_file_save_to_file(A.ini, A.ini_path.c_str(), nullptr);
 }
 
 // ---------------------------------------------------------------- view math
 static Image* img() { return A.cur && A.cur->img ? A.cur->img.get() : nullptr; }
+// the file commands act on: browser selection, or the image being viewed
+static std::string target() {
+    if (A.browser) { auto v = browser_selected(); return v.empty() ? "" : v[0]; }
+    return A.want;
+}
+static bool viewable(const std::string& p) { std::string e = lower_ext(p); return is_image_ext(e) || is_3d_ext(e); }
 static int area_w() { return gtk_widget_get_allocated_width(A.area); }
 static int area_h() { return gtk_widget_get_allocated_height(A.area); }
 
@@ -482,6 +499,11 @@ static std::string human_size(double b) {
 
 static void update_status() {
     std::string l, r;
+    if (A.browser) {
+        gtk_label_set_text(GTK_LABEL(A.status_l), browser_status().c_str());
+        gtk_label_set_text(GTK_LABEL(A.status_r), ("thumbnails " + std::to_string(browser_thumb_size()) + " px").c_str());
+        return;
+    }
     if (!A.files.empty() && A.idx >= 0) l = std::to_string(A.idx + 1) + "/" + std::to_string(A.files.size()) + "   " + basename_of(A.want);
     if (A.jobs.count(A.want) && (A.cur_path != A.want || (A.cur && A.cur->info.preview))) {
         l += "   loading" + std::string(A.cur_path == A.want ? " full resolution " : " ") + std::to_string(A.jobs[A.want].ctl->progress / 10) + "%";
@@ -510,16 +532,6 @@ static void update_status() {
 }
 
 // ---------------------------------------------------------------- helpers for commands
-static GdkPixbuf* pixbuf_from_image(Image* im) {   // straight alpha
-    if (!im || (uint64_t)im->width() * im->height() * 4 >= INT32_MAX) return nullptr;
-    GdkPixbuf* pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, im->width(), im->height());
-    if (!pb) return nullptr;
-    guint8* px = gdk_pixbuf_get_pixels(pb); int rs = gdk_pixbuf_get_rowstride(pb);
-    for (int y = 0; y < im->height(); y++)
-        for (int x = 0; x < im->width(); x++) im->pixel(x, y, px + (size_t)y * rs + x * 4);
-    return pb;
-}
-
 static GdkPixbuf* current_pixbuf() {          // incl. rotation/flip
     GdkPixbuf* pb = pixbuf_from_image(img());
     if (!pb) return nullptr;
@@ -586,12 +598,13 @@ static void cmd_save_as() {
 }
 
 static void cmd_rename() {
-    if (A.cur_path.empty()) return;
+    std::string src = target();
+    if (src.empty()) return;
     GtkWidget* d = gtk_dialog_new_with_buttons("Rename", GTK_WINDOW(A.win), GTK_DIALOG_MODAL, "_Cancel", GTK_RESPONSE_CANCEL, "_Rename", GTK_RESPONSE_OK, nullptr);
     gtk_dialog_set_default_response(GTK_DIALOG(d), GTK_RESPONSE_OK);
     GtkWidget* e = gtk_entry_new();
     gtk_entry_set_activates_default(GTK_ENTRY(e), TRUE);
-    std::string base = basename_of(A.cur_path);
+    std::string base = basename_of(src);
     gtk_entry_set_text(GTK_ENTRY(e), base.c_str());
     gtk_widget_set_size_request(e, 420, -1);
     gtk_container_set_border_width(GTK_CONTAINER(gtk_dialog_get_content_area(GTK_DIALOG(d))), 10);
@@ -602,15 +615,18 @@ static void cmd_rename() {
     if (gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_OK) {
         std::string nn = gtk_entry_get_text(GTK_ENTRY(e));
         if (!nn.empty() && nn != base) {
-            GFile* f = g_file_new_for_path(A.cur_path.c_str());
+            GFile* f = g_file_new_for_path(src.c_str());
             GError* err = nullptr;
             GFile* nf = g_file_set_display_name(f, nn.c_str(), nullptr, &err);
             if (nf) {
                 gchar* np = g_file_get_path(nf);
-                auto c = A.cache.find(A.cur_path);
-                if (c != A.cache.end()) { A.cache[np] = c->second; A.cache.erase(A.cur_path); }
-                A.files[A.idx] = np; A.cur_path = A.want = np;
-                gtk_window_set_title(GTK_WINDOW(A.win), (basename_of(np) + " - " APP_NAME).c_str());
+                auto c = A.cache.find(src);
+                if (c != A.cache.end()) { A.cache[np] = c->second; A.cache.erase(src); }
+                for (auto& fp : A.files) if (fp == src) fp = np;
+                if (A.cur_path == src) A.cur_path = np;
+                if (A.want == src) A.want = np;
+                if (A.browser) browser_set_folder(browser_folder(), np);
+                else gtk_window_set_title(GTK_WINDOW(A.win), (basename_of(np) + " - " APP_NAME).c_str());
                 g_free(np); g_object_unref(nf);
                 update_status();
             } else { message(GTK_MESSAGE_ERROR, err->message); g_error_free(err); }
@@ -620,7 +636,28 @@ static void cmd_rename() {
     gtk_widget_destroy(d);
 }
 
+static void trash_in_browser() {
+    auto sel = browser_selected();
+    if (sel.empty()) return;
+    if (A.confirm_delete) {
+        std::string q = sel.size() == 1 ? "Move \"" + basename_of(sel[0]) + "\" to the trash?" : "Move " + std::to_string(sel.size()) + " items to the trash?";
+        GtkWidget* d = gtk_message_dialog_new(GTK_WINDOW(A.win), GTK_DIALOG_MODAL, GTK_MESSAGE_QUESTION, GTK_BUTTONS_OK_CANCEL, "%s", q.c_str());
+        int resp = gtk_dialog_run(GTK_DIALOG(d)); gtk_widget_destroy(d);
+        if (resp != GTK_RESPONSE_OK) return;
+    }
+    for (auto& p : sel) {
+        GFile* f = g_file_new_for_path(p.c_str());
+        GError* err = nullptr;
+        if (!g_file_trash(f, nullptr, &err)) { message(GTK_MESSAGE_ERROR, basename_of(p) + ": " + err->message); g_error_free(err); }
+        g_object_unref(f);
+        A.cache.erase(p);
+        if (p == A.cur_path) { stop_animation(); A.cur.reset(); A.cur_path.clear(); A.want.clear(); A.files.clear(); A.idx = -1; }
+    }
+    browser_refresh();
+}
+
 static void cmd_trash() {
+    if (A.browser) { trash_in_browser(); return; }
     if (A.files.empty() || A.idx < 0) return;
     std::string p = A.files[A.idx];
     if (A.confirm_delete) {
@@ -641,16 +678,24 @@ static void cmd_trash() {
 }
 
 static void cmd_info() {
-    if (A.want.empty()) return;
-    std::string s = "File: " + A.want + "\n";
+    std::string t = target();
+    if (t.empty()) return;
+    std::string s = "File: " + t + "\n";
+    {
+        gboolean unc;
+        gchar* ct = g_content_type_guess(t.c_str(), nullptr, 0, &unc);
+        gchar* desc = g_content_type_get_description(ct);
+        s += std::string("Type: ") + desc + "\n";
+        g_free(desc); g_free(ct);
+    }
     GStatBuf st;
-    if (g_stat(A.want.c_str(), &st) == 0) {
+    if (g_stat(t.c_str(), &st) == 0) {
         GDateTime* dt = g_date_time_new_from_unix_local(st.st_mtime);
         gchar* ds = g_date_time_format(dt, "%Y-%m-%d %H:%M:%S");
         s += "Size: " + human_size((double)st.st_size) + " (" + std::to_string((long long)st.st_size) + " bytes)\nModified: " + ds + "\n";
         g_free(ds); g_date_time_unref(dt);
     }
-    if (A.cur && A.cur_path == A.want) {
+    if (A.cur && A.cur_path == t) {
         const ImageInfo& in = A.cur->info;
         if (img()) {
             s += "Format: " + in.format + "\n";
@@ -670,8 +715,9 @@ static void cmd_info() {
 }
 
 static void cmd_open_with() {
-    if (A.cur_path.empty()) return;
-    GFile* f = g_file_new_for_path(A.cur_path.c_str());
+    std::string t = target();
+    if (t.empty()) return;
+    GFile* f = g_file_new_for_path(t.c_str());
     GtkWidget* d = gtk_app_chooser_dialog_new(GTK_WINDOW(A.win), GTK_DIALOG_MODAL, f);
     if (gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_OK) {
         GAppInfo* ai = gtk_app_chooser_get_app_info(GTK_APP_CHOOSER(d));
@@ -686,8 +732,9 @@ static void cmd_open_with() {
 }
 
 static void cmd_show_in_folder() {
-    if (A.cur_path.empty()) return;
-    gchar* uri = g_filename_to_uri(A.cur_path.c_str(), nullptr, nullptr);
+    std::string t = target();
+    if (t.empty()) return;
+    gchar* uri = g_filename_to_uri(t.c_str(), nullptr, nullptr);
     GDBusConnection* bus = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, nullptr);
     bool ok = false;
     if (bus) {
@@ -698,7 +745,7 @@ static void cmd_show_in_folder() {
         g_object_unref(bus);
     }
     if (!ok) {
-        gchar* dir = g_path_get_dirname(A.cur_path.c_str());
+        gchar* dir = g_path_get_dirname(t.c_str());
         gchar* du = g_filename_to_uri(dir, nullptr, nullptr);
         g_app_info_launch_default_for_uri(du, nullptr, nullptr);
         g_free(du); g_free(dir);
@@ -707,10 +754,11 @@ static void cmd_show_in_folder() {
 }
 
 static void cmd_f3d() {
-    if (A.want.empty()) return;
+    std::string t = target();
+    if (t.empty()) return;
     std::string f3d = find_f3d();
     if (f3d.empty()) { message(GTK_MESSAGE_INFO, "f3d was not found.\nInstall it (https://f3d.app) or put it in your PATH."); return; }
-    const gchar* argv[] = {f3d.c_str(), A.want.c_str(), nullptr};
+    const gchar* argv[] = {f3d.c_str(), t.c_str(), nullptr};
     GError* err = nullptr;
     if (!g_spawn_async(nullptr, (gchar**)argv, nullptr, G_SPAWN_DEFAULT, nullptr, nullptr, nullptr, &err)) {
         message(GTK_MESSAGE_ERROR, err->message); g_error_free(err);
@@ -759,6 +807,63 @@ static void shortcuts_help() {
     gtk_widget_destroy(d);
 }
 
+static void set_title() {
+    std::string t;
+    if (A.browser) t = basename_of(browser_folder().empty() ? "/" : browser_folder());
+    else if (!A.want.empty()) t = basename_of(A.want);
+    gtk_window_set_title(GTK_WINDOW(A.win), t.empty() ? APP_NAME : (t + " - " APP_NAME).c_str());
+}
+
+static void set_browser(bool on) {
+    if (on == A.browser) return;
+    A.browser = on;
+    if (on) {
+        if (A.slideshow_id) { g_source_remove(A.slideshow_id); A.slideshow_id = 0; }
+        stop_animation();
+        gtk_stack_set_visible_child_name(GTK_STACK(A.stack), "browser");
+        if (!A.want.empty()) {
+            gchar* d = g_path_get_dirname(A.want.c_str());
+            browser_set_folder(d, A.want);
+            g_free(d);
+        } else if (browser_folder().empty()) browser_set_folder(g_get_home_dir());
+        browser_focus();
+    } else {
+        gtk_stack_set_visible_child_name(GTK_STACK(A.stack), "viewer");
+        gtk_widget_grab_focus(A.area);
+        if (A.cur && A.cur->anim && !A.anim_id) {
+            A.anim_it = gdk_pixbuf_animation_get_iter(A.cur->anim, nullptr);
+            int d = gdk_pixbuf_animation_iter_get_delay_time(A.anim_it);
+            if (d >= 0) A.anim_id = g_timeout_add(std::max(d, 20), anim_tick, nullptr);
+        }
+    }
+    set_title();
+    update_status();
+}
+
+static void view_file(const std::string& p) {      // from the browser
+    A.from_browser = true;
+    set_browser(false);
+    open_file(p);
+}
+
+static void browser_activate(const std::string& p) {
+    if (viewable(p)) { view_file(p); return; }
+    gchar* uri = g_filename_to_uri(p.c_str(), nullptr, nullptr);
+    GError* err = nullptr;
+    if (uri && !g_app_info_launch_default_for_uri(uri, nullptr, &err)) {
+        message(GTK_MESSAGE_ERROR, err ? err->message : "No application for this file type.");
+        if (err) g_error_free(err);
+    }
+    g_free(uri);
+}
+
+static void cmd_toggle_browser() {
+    if (!A.browser) { set_browser(true); return; }
+    std::string t = target();
+    if (!t.empty() && viewable(t)) { if (t != A.want) { view_file(t); return; } A.from_browser = true; set_browser(false); }
+    else if (!A.want.empty()) set_browser(false);
+}
+
 #define K(k) GDK_KEY_##k
 #define CTRL GDK_CONTROL_MASK
 #define SHIFT GDK_SHIFT_MASK
@@ -772,14 +877,15 @@ static void register_commands() {
     auto C = [](int a, int b) { return (GdkModifierType)(a | b); };
     // File
     add("open", "Open...", "File", "document-open", K(o), CTRL, cmd_open);
-    add("reload", "Reload", "File", "view-refresh", K(F5), NOMOD, [] { if (!A.want.empty()) { A.cache.erase(A.want); A.cur.reset(); A.cur_path.clear(); open_path(A.want); } });
+    add("reload", "Reload / refresh folder", "File", "view-refresh", K(F5), NOMOD, [] { if (A.browser) { browser_refresh(); return; } if (!A.want.empty()) { A.cache.erase(A.want); A.cur.reset(); A.cur_path.clear(); open_path(A.want); } });
     add("save_as", "Save as...", "File", "document-save-as", K(s), CTRL, cmd_save_as);
     add("open_with", "Open with...", "File", "system-run", K(e), NOMOD, cmd_open_with);
     add("show_folder", "Show in file manager", "File", "folder-open", K(o), C(CTRL, SHIFT), cmd_show_in_folder);
     add("copy_image", "Copy image", "File", "edit-copy", K(c), CTRL, [] {
         if (GdkPixbuf* pb = current_pixbuf()) { gtk_clipboard_set_image(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), pb); g_object_unref(pb); } });
     add("copy_path", "Copy file path", "File", "edit-paste", K(c), C(CTRL, SHIFT), [] {
-        if (!A.want.empty()) gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), A.want.c_str(), -1); });
+        std::string t = target();
+        if (!t.empty()) gtk_clipboard_set_text(gtk_clipboard_get(GDK_SELECTION_CLIPBOARD), t.c_str(), -1); });
     add("rename", "Rename...", "File", "document-edit", K(F2), NOMOD, cmd_rename);
     add("trash", "Move to trash", "File", "user-trash", K(Delete), NOMOD, cmd_trash);
     add("info", "File info", "File", "dialog-information", K(i), NOMOD, cmd_info);
@@ -793,10 +899,20 @@ static void register_commands() {
         if (A.slideshow_id) { g_source_remove(A.slideshow_id); A.slideshow_id = 0; }
         else A.slideshow_id = g_timeout_add(A.slideshow_ms, slideshow_tick, nullptr);
         update_status(); }, [] { return A.slideshow_id != 0; });
+    // Browser
+    add("browser", "Browser / viewer", "Browser", "view-grid", K(Tab), NOMOD, cmd_toggle_browser, [] { return A.browser; });
+    add("go_up", "Parent folder", "Browser", "go-up", K(Up), GDK_MOD1_MASK, [] { set_browser(true); browser_go_up(); });
+    add("show_hidden", "Show hidden files", "Browser", "view-reveal", K(h), CTRL, [] {
+        browser_set_options(browser_sort(), browser_reverse(), !browser_hidden()); }, [] { return browser_hidden(); });
+    add("sort_name", "Sort by name", "Browser", "view-sort-ascending", 0, NOMOD, [] { browser_set_options(SORT_NAME, browser_reverse(), browser_hidden()); }, [] { return browser_sort() == SORT_NAME; });
+    add("sort_date", "Sort by date", "Browser", "view-sort-ascending", 0, NOMOD, [] { browser_set_options(SORT_DATE, browser_reverse(), browser_hidden()); }, [] { return browser_sort() == SORT_DATE; });
+    add("sort_size", "Sort by size", "Browser", "view-sort-ascending", 0, NOMOD, [] { browser_set_options(SORT_SIZE, browser_reverse(), browser_hidden()); }, [] { return browser_sort() == SORT_SIZE; });
+    add("sort_type", "Sort by type", "Browser", "view-sort-ascending", 0, NOMOD, [] { browser_set_options(SORT_TYPE, browser_reverse(), browser_hidden()); }, [] { return browser_sort() == SORT_TYPE; });
+    add("sort_reverse", "Reverse order", "Browser", "view-sort-descending", 0, NOMOD, [] { browser_set_options(browser_sort(), !browser_reverse(), browser_hidden()); }, [] { return browser_reverse(); });
     add("loop", "Loop at end of folder", "Navigate", "media-playlist-repeat", 0, NOMOD, [] { A.loop_dir = !A.loop_dir; }, [] { return A.loop_dir; });
     // View
-    add("zoom_in", "Zoom in", "View", "zoom-in", K(plus), NOMOD, [] { zoom_step(1, area_w() / 2.0, area_h() / 2.0); });
-    add("zoom_out", "Zoom out", "View", "zoom-out", K(minus), NOMOD, [] { zoom_step(-1, area_w() / 2.0, area_h() / 2.0); });
+    add("zoom_in", "Zoom in (browser: bigger thumbnails)", "View", "zoom-in", K(plus), NOMOD, [] { if (A.browser) { browser_thumb_step(1); update_status(); return; } zoom_step(1, area_w() / 2.0, area_h() / 2.0); });
+    add("zoom_out", "Zoom out (browser: smaller thumbnails)", "View", "zoom-out", K(minus), NOMOD, [] { if (A.browser) { browser_thumb_step(-1); update_status(); return; } zoom_step(-1, area_w() / 2.0, area_h() / 2.0); });
     add("zoom_100", "Actual pixels (100%)", "View", "zoom-original", K(1), NOMOD, [] {
         int d = A.cur ? A.cur->info.scale_div : 1; set_zoom(1.0 * d, area_w() / 2.0, area_h() / 2.0); A.offx = A.offy = 0; gtk_widget_queue_draw(A.area); });
     add("zoom_fit", "Fit to window", "View", "zoom-fit-best", K(0), NOMOD, [] { fit(true); });
@@ -901,9 +1017,9 @@ static GtkWidget* build_menu() {
 
 static void show_menu(GdkEvent* ev) {
     GtkWidget* menu = build_menu();
-    gtk_menu_attach_to_widget(GTK_MENU(menu), A.area, nullptr);
+    gtk_menu_attach_to_widget(GTK_MENU(menu), A.stack, nullptr);
     if (ev) gtk_menu_popup_at_pointer(GTK_MENU(menu), ev);
-    else gtk_menu_popup_at_widget(GTK_MENU(menu), A.area, GDK_GRAVITY_NORTH_WEST, GDK_GRAVITY_NORTH_WEST, nullptr);
+    else gtk_menu_popup_at_widget(GTK_MENU(menu), A.stack, GDK_GRAVITY_NORTH_WEST, GDK_GRAVITY_NORTH_WEST, nullptr);
 }
 
 static void fav_move(const std::string& id, int d) {
@@ -1044,19 +1160,36 @@ static void customize_favorites() {
 static gboolean on_key(GtkWidget*, GdkEventKey* ev, gpointer) {
     guint key = gdk_keyval_to_lower(ev->keyval);
     GdkModifierType m = (GdkModifierType)(ev->state & (GDK_CONTROL_MASK | GDK_SHIFT_MASK | GDK_MOD1_MASK));
+    GtkWidget* focus = gtk_window_get_focus(GTK_WINDOW(A.win));
+    if (A.browser && focus && GTK_IS_ENTRY(focus)) {     // typing in the path bar
+        if (key == GDK_KEY_Escape || key == GDK_KEY_Tab) { browser_focus(); return TRUE; }
+        return FALSE;
+    }
     if (key == GDK_KEY_Escape) {
         if (A.fullscreen) toggle_fullscreen();
         else if (A.slideshow_id) run_cmd(cmd_index("slideshow"));
+        else if (!A.browser && A.from_browser) set_browser(true);
         else gtk_widget_destroy(A.win);
         return TRUE;
     }
+    // in the browser, arrows/Enter/letters belong to the thumbnail grid; only these commands apply
+    static const char* browser_ok[] = {"browser", "go_up", "show_hidden", "open", "reload", "open_with", "show_folder", "copy_path",
+        "rename", "trash", "info", "quit", "fullscreen", "toolbar", "statusbar", "on_top", "zoom_in", "zoom_out", "f3d",
+        "customize_favorites", "show_menu", "help", "about"};
+    auto allowed = [](const char* id) {
+        if (!A.browser) return true;
+        for (const char* b : browser_ok) if (!strcmp(b, id)) return true;
+        return false;
+    };
+    if (A.browser && key == GDK_KEY_BackSpace && !m) { browser_go_up(); return TRUE; }
     for (int pass = 0; pass < 2; pass++) {
         for (size_t i = 0; i < cmds.size(); i++)
-            if (cmds[i].key && gdk_keyval_to_lower(cmds[i].key) == key && cmds[i].mods == m) { run_cmd((int)i); return TRUE; }
+            if (cmds[i].key && gdk_keyval_to_lower(cmds[i].key) == key && cmds[i].mods == m && allowed(cmds[i].id)) { run_cmd((int)i); return TRUE; }
         for (auto& a : aliases)
-            if (a.key == key && a.mods == m) { run_cmd(cmd_index(a.id)); return TRUE; }
+            if (a.key == key && a.mods == m && allowed(a.id)) { run_cmd(cmd_index(a.id)); return TRUE; }
         m = (GdkModifierType)(m & ~GDK_SHIFT_MASK);      // '+' etc. need Shift on many layouts
     }
+    if (A.browser) return FALSE;
     if (img() && (ev->state & GDK_SHIFT_MASK)) {         // Shift+arrows pan
         double step = 64;
         switch (key) {
@@ -1144,7 +1277,12 @@ static void on_drop(GtkWidget*, GdkDragContext* ctx, int, int, GtkSelectionData*
     gchar** uris = gtk_selection_data_get_uris(sd);
     if (uris && uris[0]) {
         gchar* f = g_filename_from_uri(uris[0], nullptr, nullptr);
-        if (f) { open_file(f); g_free(f); }
+        if (f) {
+            if (g_file_test(f, G_FILE_TEST_IS_DIR)) { set_browser(true); browser_set_folder(f); }
+            else if (A.browser && !viewable(f)) { gchar* d = g_path_get_dirname(f); browser_set_folder(d, f); g_free(d); }
+            else { set_browser(false); open_file(f); }
+            g_free(f);
+        }
     }
     g_strfreev(uris);
     gtk_drag_finish(ctx, TRUE, FALSE, t);
@@ -1176,7 +1314,13 @@ static void apply_dark_theme() {
         "treeview.view { background-color: #232428; color: #d8d8dc; }"
         "treeview.view:selected { background-color: #3d5a8a; color: #ffffff; }"
         "entry { background-color: #2b2d31; color: #e0e0e4; border-color: #44464d; }"
-        "separator { background-color: #3a3c42; }";
+        "separator { background-color: #3a3c42; }"
+        "iconview, iconview.view { background-color: #1e1f22; color: #d8d8dc; }"
+        "iconview:selected, iconview.view:selected { background-color: #3d5a8a; color: #ffffff; border-radius: 4px; }"
+        "#pathbar { background: #26272b; padding: 4px 6px; border-bottom: 1px solid #111214; }"
+        "#pathbar button { padding: 2px 6px; }"
+        "paned > separator { background-color: #111214; min-width: 3px; }"
+        "scrolledwindow, viewport { background-color: #1e1f22; }";
     GtkCssProvider* p = gtk_css_provider_new();
     gtk_css_provider_load_from_data(p, css, -1, nullptr);
     // APPLICATION priority: above the theme, below the user's own gtk.css
@@ -1239,16 +1383,33 @@ int main(int argc, char** argv) {
     gtk_widget_set_can_focus(A.area, TRUE);
     gtk_widget_add_events(A.area, GDK_BUTTON_PRESS_MASK | GDK_BUTTON_RELEASE_MASK | GDK_POINTER_MOTION_MASK |
                                   GDK_SCROLL_MASK | GDK_SMOOTH_SCROLL_MASK);
-    gtk_box_pack_start(GTK_BOX(vb), A.area, TRUE, TRUE, 0);
+    A.stack = gtk_stack_new();
+    gtk_stack_add_named(GTK_STACK(A.stack), A.area, "viewer");
+    BrowserHost host;
+    host.activate = browser_activate;
+    host.context_menu = [](GdkEvent* ev) { show_menu(ev); };
+    host.changed = [] { if (A.browser) { update_status(); set_title(); } };
+    gtk_stack_add_named(GTK_STACK(A.stack), browser_create(host), "browser");
+    gtk_box_pack_start(GTK_BOX(vb), A.stack, TRUE, TRUE, 0);
+    {
+        GError* e = nullptr;
+        int ts = g_key_file_get_integer(A.ini, "browser", "thumb_size", &e); if (e) { g_clear_error(&e); ts = 128; }
+        int tw = g_key_file_get_integer(A.ini, "browser", "tree_width", &e); if (e) { g_clear_error(&e); tw = 240; }
+        browser_set_thumb_size(ts);
+        browser_set_pane_pos(tw);
+        browser_set_options(g_key_file_get_integer(A.ini, "browser", "sort", nullptr),
+                            g_key_file_get_boolean(A.ini, "browser", "reverse", nullptr),
+                            g_key_file_get_boolean(A.ini, "browser", "show_hidden", nullptr));
+    }
     g_signal_connect(A.area, "draw", G_CALLBACK(on_draw), nullptr);
     g_signal_connect(A.area, "button-press-event", G_CALLBACK(on_press), nullptr);
     g_signal_connect(A.area, "button-release-event", G_CALLBACK(on_release), nullptr);
     g_signal_connect(A.area, "motion-notify-event", G_CALLBACK(on_motion), nullptr);
     g_signal_connect(A.area, "scroll-event", G_CALLBACK(on_scroll), nullptr);
     g_signal_connect(A.area, "size-allocate", G_CALLBACK(on_size), nullptr);
-    gtk_drag_dest_set(A.area, GTK_DEST_DEFAULT_ALL, nullptr, 0, GDK_ACTION_COPY);
-    gtk_drag_dest_add_uri_targets(A.area);
-    g_signal_connect(A.area, "drag-data-received", G_CALLBACK(on_drop), nullptr);
+    gtk_drag_dest_set(A.stack, GTK_DEST_DEFAULT_ALL, nullptr, 0, GDK_ACTION_COPY);
+    gtk_drag_dest_add_uri_targets(A.stack);
+    g_signal_connect(A.stack, "drag-data-received", G_CALLBACK(on_drop), nullptr);
 
     A.statusbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 8);
     gtk_widget_set_name(A.statusbar, "statusbar");
@@ -1268,7 +1429,21 @@ int main(int argc, char** argv) {
     gtk_widget_set_visible(A.statusbar, A.show_status);
     rebuild_toolbar();
     gtk_widget_grab_focus(A.area);
-    if (argc > 1) open_file(argv[1]);
+    // start: a file -> viewer; a folder or nothing -> browser (last folder, else home)
+    std::string start = argc > 1 ? argv[1] : "";
+    if (!start.empty() && !g_file_test(start.c_str(), G_FILE_TEST_IS_DIR)) open_file(start);
+    else {
+        if (start.empty()) {
+            gchar* f = g_key_file_get_string(A.ini, "browser", "folder", nullptr);
+            start = f && g_file_test(f, G_FILE_TEST_IS_DIR) ? f : g_get_home_dir();
+            g_free(f);
+        }
+        gtk_stack_set_visible_child_name(GTK_STACK(A.stack), "browser");
+        A.browser = true;
+        browser_set_folder(start);
+        browser_focus();
+        set_title();
+    }
     update_status();
     gtk_main();
     for (auto& j : A.jobs) j.second.ctl->cancel = true;

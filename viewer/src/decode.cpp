@@ -55,6 +55,18 @@ std::unique_ptr<Image> image_from_pixbuf(GdkPixbuf* pb) {
     return img;
 }
 
+GdkPixbuf* pixbuf_from_image(Image* im) {   // straight alpha
+    if (!im || (uint64_t)im->width() * im->height() * 4 >= INT32_MAX) return nullptr;
+    GdkPixbuf* pb = gdk_pixbuf_new(GDK_COLORSPACE_RGB, TRUE, 8, im->width(), im->height());
+    if (!pb) return nullptr;
+    guint8* px = gdk_pixbuf_get_pixels(pb); int rs = gdk_pixbuf_get_rowstride(pb);
+    for (int y = 0; y < im->height(); y++)
+        for (int x = 0; x < im->width(); x++) im->pixel(x, y, px + (size_t)y * rs + x * 4);
+    return pb;
+}
+
+bool is_raw_ext(const std::string& e) { return kRaw.count(e) > 0; }
+
 static std::string pixbuf_format_name(const char* path) {
     GdkPixbufFormat* f = gdk_pixbuf_get_file_info(path, nullptr, nullptr);
     if (!f) return "";

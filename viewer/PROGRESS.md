@@ -18,6 +18,8 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - src/image.*   tiled image, pixel conversion, mipmaps
 - src/psd.cpp   PSD/PSB decoder
 - src/decode.*  format dispatch (pixbuf / stb / RAW preview), extension lists
+- src/thumbs.*  thumbnail generation + freedesktop cache + worker pool
+- src/browser.* folder tree, path bar, thumbnail grid
 - src/main.cpp  GTK UI, commands, favorites, loading jobs + cache/preload, --convert CLI
 - build.sh, build-appimage.sh, appdir/, CI job `viewer-appimage` in .github/workflows/build.yml
 
@@ -27,7 +29,7 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
        f3d::engine::createExternal(); bundle prebuilt libf3d (+VTK) in the AppImage.
        Currently: 3D files are listed in the folder, "D" launches external f3d.
 
-## In progress: Browser mode (user request: like Imagine, but show ALL file types)
+## Done: Browser mode (user request: like Imagine, but show ALL file types) - tested under Xvfb
 - Plan: src/thumbs.* (thumbnail gen + freedesktop cache ~/.cache/thumbnails/large, worker pool,
   visible-first priority), src/browser.* (folder tree | path bar + GtkIconView of all files,
   folders first; non-images get content-type icons; cached thumbs from file managers reused).
@@ -36,6 +38,7 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - Start in browser when launched without a file (or with a folder).
 
 ## Ideas / TODO
+- Browser: preview pane, back/forward history, f3d thumbnails for 3D files (f3d --output), drag files out.
 - Re-decode the visible region at full resolution when zooming into a downscaled huge PSD.
 - PSD without "Maximize compatibility": composite layers ourselves (normal blend + opacity).
 - EXIF panel, histogram, thumbnail browser strip, batch convert dialog, user-editable shortcuts.

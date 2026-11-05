@@ -25,6 +25,10 @@ bool load_psd(const uint8_t* data, size_t len, uint64_t budget_px, LoadCtl& ctl,
 // Copy a GdkPixbuf into a new Image (used for loaders and animation frames).
 std::unique_ptr<Image> image_from_pixbuf(GdkPixbuf* pb);
 
+// Straight-alpha RGBA copy of level 0 (nullptr if over 2 GB).
+GdkPixbuf* pixbuf_from_image(Image* im);
+
 std::string lower_ext(const std::string& path);
 bool is_image_ext(const std::string& ext);
 bool is_3d_ext(const std::string& ext);
+bool is_raw_ext(const std::string& ext);

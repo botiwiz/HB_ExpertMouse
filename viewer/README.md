@@ -28,6 +28,25 @@ Then `chmod +x HB_Viewer-x86_64.AppImage` and run it, optionally with a file or 
 
 > PSDs saved with **Maximize Compatibility** turned off may not contain a usable merged image, and may show blank. Photoshop turns this option on by default.
 
+## Browser
+
+The app opens in the browser, like Imagine. Launching it with a folder does the same; launching it with an image file opens the viewer directly.
+
+- On the left is a folder tree with Home, Drives and File system. On the right is a path bar (type a path and press Enter), an Up button and a thumbnail grid.
+- The grid shows **every file** in the folder, folders first:
+  - Images get real thumbnails, including huge PSD/PSB and camera RAW files.
+  - Any other file shows the thumbnail your file manager already made for it (videos, PDFs…), or else its file-type icon.
+- Thumbnails are made in the background, visible ones first. They are stored in the shared `~/.cache/thumbnails`, so they open instantly next time, and file managers can reuse them too.
+- Double-click or press Enter:
+  - on an image or 3D file, it opens in the viewer;
+  - on a folder, it opens the folder;
+  - on any other file, it opens in the file's default app.
+- Tab switches between the browser and the viewer. Esc in the viewer goes back to the browser.
+- Backspace or Alt+Up goes to the parent folder. +/− changes the thumbnail size. Ctrl+H shows hidden files.
+- You can sort by name, date, size or type, and reverse the order. The folder refreshes automatically when files change.
+- Rename, Move to trash (works on several selected files), File info, Open with, Copy path and Show in file manager act on the selected file.
+- Right-click opens the same command menu, with the same Favorites.
+
 ## Commands, menu and Favorites
 
 - **Right-click** anywhere to open a menu with every command, grouped as File, Navigate, View, Image, 3D, Favorites and Help. Each command shows its shortcut.
@@ -40,7 +59,8 @@ Common keys:
 
 | Key | Action |
 | --- | --- |
-| ← → / PgUp PgDn / Space Backspace | Previous / next image in the folder |
+| Tab | Switch between browser and viewer |
+| ← → / PgUp PgDn / Space Backspace | Previous / next image in the folder (viewer) |
 | + − / mouse wheel | Zoom (Ctrl+wheel navigates instead; **M** swaps the two) |
 | 0 / 1 / W | Fit / 100% / fit width |
 | F11, F, Enter, double-click | Full screen |
@@ -50,7 +70,7 @@ Common keys:
 | Ctrl+C / Ctrl+Shift+C | Copy image / copy path |
 | E / Ctrl+Shift+O / D | Open with… / show in file manager / open in f3d |
 | S | Slideshow |
-| Esc | Leave full screen, or quit |
+| Esc | Leave full screen, go back to the browser, or quit |
 
 The mouse:
 - Drag to pan.
