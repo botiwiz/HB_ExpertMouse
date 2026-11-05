@@ -28,3 +28,16 @@ jobs:
         with:
           name: HB_ExpertMouse-AppImage
           path: linux/HB_ExpertMouse-x86_64.AppImage
+
+  viewer-appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev
+      - name: Build HB_Viewer AppImage
+        run: viewer/build-appimage.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: HB_Viewer-AppImage
+          path: viewer/HB_Viewer-x86_64.AppImage

@@ -134,7 +134,8 @@ void convert_pixels(RawLayout layout, bool alpha, bool unmatte, const uint8_t* p
             r = (uint8_t)(ch[0][o] * k / 255); g = (uint8_t)(ch[1][o] * k / 255); b = (uint8_t)(ch[2][o] * k / 255); break; }
         case RawLayout::Lab:
         case RawLayout::LabA: { uint8_t c[3]; lab_to_rgb(ch[0][o], ch[1][o], ch[2][o], c); r = c[0]; g = c[1]; b = c[2];
-            if (alpha && layout == RawLayout::LabA) a = ch[3][o]; break; }
+            if (alpha && layout == RawLayout::LabA) a = ch[3][o];
+            break; }
         default: r = g = b = 0;
         }
         if (alpha && unmatte && a > 0 && a < 255) {

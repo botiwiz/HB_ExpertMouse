@@ -366,10 +366,18 @@ static int last_dir = 1;
 
 static void show_result(const std::string& path, std::shared_ptr<LoadResult> r) {
     stop_animation();
+    // full-res result replacing its own quick preview: keep the user's zoom/pan/rotation
+    bool upgrade = A.cur && A.cur->info.preview && A.cur_path == path && A.cur->img && r->img;
+    double old_w = upgrade ? A.cur->img->width() : 0;
     A.cur = std::move(r);
     A.cur_path = path;
-    A.rot = 0; A.flip_h = A.flip_v = false;
-    if (img()) { if (A.fit_on_open) fit(false); else { A.zoom = 1; A.offx = A.offy = 0; A.auto_fit = false; } }
+    if (upgrade) {
+        if (A.auto_fit) fit(false);
+        else A.zoom *= old_w / A.cur->img->width();
+    } else {
+        A.rot = 0; A.flip_h = A.flip_v = false;
+        if (img()) { if (A.fit_on_open) fit(false); else { A.zoom = 1; A.offx = A.offy = 0; A.auto_fit = false; } }
+    }
     if (A.cur->anim) {
         A.anim_it = gdk_pixbuf_animation_get_iter(A.cur->anim, nullptr);
         int d = gdk_pixbuf_animation_iter_get_delay_time(A.anim_it);
@@ -380,7 +388,16 @@ static void show_result(const std::string& path, std::shared_ptr<LoadResult> r) 
     g_free(t);
     gtk_widget_queue_draw(A.area);
     update_status();
-    preload_neighbours(last_dir);
+    if (!A.cur->info.preview) preload_neighbours(last_dir);
+}
+
+static gboolean job_preview(gpointer p) {
+    std::unique_ptr<Done> d((Done*)p);
+    auto it = A.jobs.find(d->path);
+    if (it == A.jobs.end() || it->second.ctl->cancel || d->path != A.want) return G_SOURCE_REMOVE;
+    if (A.cur_path == d->path && A.cur && !A.cur->info.preview) return G_SOURCE_REMOVE;
+    show_result(d->path, std::shared_ptr<LoadResult>(std::move(d->r)));
+    return G_SOURCE_REMOVE;
 }
 
 static gboolean job_done(gpointer p) {
@@ -402,7 +419,8 @@ static void start_job(const std::string& path) {
     A.job_start[path] = std::chrono::steady_clock::now();
     uint64_t budget = A.budget_px;
     std::thread([path, ctl, budget] {
-        auto r = load_image(path, budget, *ctl);
+        auto r = load_image(path, budget, *ctl, [&path](std::unique_ptr<LoadResult> p) {
+            g_idle_add(job_preview, new Done{path, std::move(p)}); });
         g_idle_add(job_done, new Done{path, std::move(r)});
     }).detach();
 }
@@ -465,8 +483,9 @@ static std::string human_size(double b) {
 static void update_status() {
     std::string l, r;
     if (!A.files.empty() && A.idx >= 0) l = std::to_string(A.idx + 1) + "/" + std::to_string(A.files.size()) + "   " + basename_of(A.want);
-    if (A.jobs.count(A.want) && A.cur_path != A.want) {
-        l += "   loading " + std::to_string(A.jobs[A.want].ctl->progress / 10) + "%";
+    if (A.jobs.count(A.want) && (A.cur_path != A.want || (A.cur && A.cur->info.preview))) {
+        l += "   loading" + std::string(A.cur_path == A.want ? " full resolution " : " ") + std::to_string(A.jobs[A.want].ctl->progress / 10) + "%";
+        if (A.cur_path == A.want && A.cur->info.orig_w) l += "   " + std::to_string(A.cur->info.orig_w) + " x " + std::to_string(A.cur->info.orig_h) + "  " + A.cur->info.format;
     } else if (A.cur && A.cur_path == A.want) {
         const ImageInfo& in = A.cur->info;
         if (img()) {
@@ -782,7 +801,10 @@ static void register_commands() {
         int d = A.cur ? A.cur->info.scale_div : 1; set_zoom(1.0 * d, area_w() / 2.0, area_h() / 2.0); A.offx = A.offy = 0; gtk_widget_queue_draw(A.area); });
     add("zoom_fit", "Fit to window", "View", "zoom-fit-best", K(0), NOMOD, [] { fit(true); });
     add("zoom_fit_width", "Fit width", "View", "zoom-fit-best", K(w), NOMOD, [] {
-        if (!img()) return; double w, h; rotated_size(w, h); A.zoom = area_w() / w; A.offx = 0; A.offy = std::max(0.0, (h * A.zoom - area_h()) / 2); A.auto_fit = false; gtk_widget_queue_draw(A.area); update_status(); });
+        if (!img()) return;
+        double w, h; rotated_size(w, h);
+        A.zoom = area_w() / w; A.offx = 0; A.offy = std::max(0.0, (h * A.zoom - area_h()) / 2);   // show the top
+        A.auto_fit = false; gtk_widget_queue_draw(A.area); update_status(); });
     add("fit_on_open", "Fit large images on open", "View", "zoom-fit-best", 0, NOMOD, [] { A.fit_on_open = !A.fit_on_open; }, [] { return A.fit_on_open; });
     add("fullscreen", "Full screen", "View", "view-fullscreen", K(F11), NOMOD, toggle_fullscreen, [] { return A.fullscreen; });
     add("background", "Cycle background", "View", "preferences-desktop-wallpaper", K(b), NOMOD, [] { A.bg = (A.bg + 1) % BG_COUNT; gtk_widget_queue_draw(A.area); });

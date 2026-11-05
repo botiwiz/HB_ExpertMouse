@@ -1,5 +1,8 @@
 # HB Miscellaneous small apps and extensions
 
+- **HB Viewer** (Linux AppImage): a fast image viewer for huge PSD/PSB files and common formats. See [viewer/README.md](viewer/README.md).
+- **HB ExpertMouse**: described below.
+
 A tiny, portable button remapper for the Kensington Expert Mouse trackball (M01496) on Windows.
 
 - **Only the Expert Mouse is remapped.** Your other mice and touchpads are unchanged.
