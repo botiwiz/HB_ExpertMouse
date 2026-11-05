@@ -70,11 +70,48 @@ def _restore_orientation(context):
             slot.type = 'GLOBAL'
 
 
+# ----------------------------------------------------------------------------
+# New objects on the workplane (via the 3D cursor + "Align: 3D Cursor")
+
+def _matrices_close(a, b, eps=1e-5):
+    return all(abs(a[i][j] - b[i][j]) < eps for i in range(4) for j in range(4))
+
+
+def apply_new_object_alignment(context, m):
+    s = context.scene.hb_workplane
+    cursor = context.scene.cursor
+    edit = context.preferences.edit
+    if not s.cursor_managed:
+        s.prev_cursor = cursor.matrix.copy()
+        s.prev_align = edit.object_align
+        s.cursor_managed = True
+    cursor.matrix = m.normalized()
+    edit.object_align = 'CURSOR'
+
+
+def restore_new_object_alignment(context):
+    s = context.scene.hb_workplane
+    if not s.cursor_managed:
+        return
+    cursor = context.scene.cursor
+    # Give the cursor back only if the user hasn't moved it since.
+    if _matrices_close(cursor.matrix, Matrix(s.matrix).normalized()):
+        cursor.matrix = Matrix(s.prev_cursor)
+    if context.preferences.edit.object_align == 'CURSOR':
+        try:
+            context.preferences.edit.object_align = s.prev_align or 'WORLD'
+        except TypeError:
+            context.preferences.edit.object_align = 'WORLD'
+    s.cursor_managed = False
+
+
 def set_custom(context, m):
     s = context.scene.hb_workplane
     s.matrix = m
     s.mode = 'CUSTOM'
     _sync_orientation(context, m)
+    if s.align_new:
+        apply_new_object_alignment(context, m)
     tag_redraw_all(context)
 
 
@@ -82,6 +119,7 @@ def clear_custom(context):
     s = context.scene.hb_workplane
     s.mode = 'AUTO'
     _restore_orientation(context)
+    restore_new_object_alignment(context)
     tag_redraw_all(context)
 
 

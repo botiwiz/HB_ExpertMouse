@@ -42,6 +42,7 @@ class VIEW3D_PT_hb_workplane(bpy.types.Panel):
         row.prop(s, "constrain_extrude_vert", toggle=True, icon='VERTEXSEL')
         row.prop(s, "constrain_extrude_face", toggle=True, icon='FACESEL')
         layout.prop(s, "sync_orientation")
+        layout.prop(s, "align_new")
 
         box = layout.box()
         box.prop(s, "grid_snap", icon='SNAP_GRID')

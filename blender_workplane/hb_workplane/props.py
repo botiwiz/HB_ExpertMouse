@@ -12,6 +12,15 @@ def _redraw(self, context):
                 area.tag_redraw()
 
 
+def _align_new_update(self, context):
+    from . import ops
+    if self.mode == 'CUSTOM':
+        if self.align_new:
+            ops.apply_new_object_alignment(context, Matrix(self.matrix))
+        else:
+            ops.restore_new_object_alignment(context)
+
+
 class HBWorkplaneSettings(PropertyGroup):
     enabled: BoolProperty(name="Auto Constraints", default=True, update=_redraw,
                           description="Constrain Move/Rotate to the workplane and show its grid")
@@ -32,6 +41,14 @@ class HBWorkplaneSettings(PropertyGroup):
                                    description="Also make the workplane the active transform orientation "
                                                "(gizmo and typed X/Y/Z follow it)")
     prev_orientation: StringProperty(default='GLOBAL', options={'HIDDEN'})
+
+    align_new: BoolProperty(name="New Objects on Workplane", default=True, update=_align_new_update,
+                            description="While a custom workplane is set, Add (Shift+A) places new objects and "
+                                        "primitives on it, rotated to match (uses the 3D cursor, restored on clear)")
+    cursor_managed: BoolProperty(default=False, options={'HIDDEN'})
+    prev_cursor: FloatVectorProperty(size=(4, 4), subtype='MATRIX', options={'HIDDEN'},
+                                     default=((1, 0, 0, 0), (0, 1, 0, 0), (0, 0, 1, 0), (0, 0, 0, 1)))
+    prev_align: StringProperty(default='WORLD', options={'HIDDEN'})
 
     show_grid: BoolProperty(name="Show Grid", default=True, update=_redraw)
     show_auto_grid: BoolProperty(name="Grid in Automatic Mode", default=True, update=_redraw)

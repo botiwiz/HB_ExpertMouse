@@ -110,6 +110,15 @@ def register():
 
 def unregister():
     _unregister_keymaps()
+    # Don't leave "Align: 3D Cursor" switched on behind the user's back.
+    try:
+        for scene in bpy.data.scenes:
+            wp = scene.hb_workplane
+            if wp.cursor_managed and bpy.context.preferences.edit.object_align == 'CURSOR':
+                bpy.context.preferences.edit.object_align = wp.prev_align or 'WORLD'
+                wp.cursor_managed = False
+    except (AttributeError, TypeError):
+        pass
     for m in reversed(_modules):
         m.unregister()
     bpy.utils.unregister_class(HBWorkplanePreferences)

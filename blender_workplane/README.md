@@ -36,6 +36,10 @@ While moving (G) or extruding (E) in Object Mode or Mesh Edit Mode:
   3+ vertices → best-fit plane; an edge → plane through the edge facing you; a vertex → its normal.
   The plane's X axis follows the face's longest edge (or the world axis — redo panel *X Axis*).
 - The redo panel (bottom-left after Space) can switch the source to **3D Cursor**, **View** or **Clear**.
+- **New objects follow the workplane**: while a custom plane is set, Add (Shift+A) — objects
+  and mesh primitives, also inside Edit Mode — creates them on the plane, rotated to match.
+  (It parks the 3D cursor on the plane and turns on *Align: 3D Cursor*; both are restored
+  when you clear the plane, unless you moved the cursor yourself. Toggle: *New Objects on Workplane*.)
 - With *Set Transform Orientation* on, the workplane also becomes the transform orientation
   "HB_Workplane", so the gizmo and typed axes follow it; clearing restores the previous one.
 - Sidebar (N) > **HB_Workplane**: on/off, Set / From 3D Cursor / Clear / Cursor to Workplane,
