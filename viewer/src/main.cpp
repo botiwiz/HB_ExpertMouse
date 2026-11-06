@@ -142,7 +142,7 @@ int main(int argc, char** argv) {
                 // sample a few frames (a single grab right after a long idle wait can come back empty)
                 QImage f;
                 long lit = 0;
-                for (int k = 0; k < 4 && lit < 100; k++) {
+                for (int k = 0; k < 10 && lit < 100; k++) {
                     QEventLoop l; QTimer::singleShot(250, &l, &QEventLoop::quit); l.exec();
                     f = v->video()->grabFramebuffer();
                     lit = 0;

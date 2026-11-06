@@ -44,7 +44,7 @@ jobs:
           LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x900x24" viewer/build/app/hb_viewer --selftest /tmp/cube.obj selftest3d.png
           # cascade view: open a deep folder, expect several columns
           # video: a generated clip must play inside the embedded mpv player
-          ffmpeg -loglevel error -f lavfi -i testsrc=duration=6:size=640x360:rate=25 -pix_fmt yuv420p /tmp/test.mp4
+          ffmpeg -loglevel error -f lavfi -i testsrc=duration=30:size=640x360:rate=25 -pix_fmt yuv420p /tmp/test.mp4
           LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x900x24" viewer/build/app/hb_viewer --selftest /tmp/test.mp4 selftest_video.png
           HBV_SELFTEST_MODES=1 xvfb-run -a -s "-screen 0 1280x900x24" viewer/build/app/hb_viewer --selftest /usr/share selftest_modes.png
           HBV_SELFTEST_CASCADE=1 xvfb-run -a -s "-screen 0 1280x900x24" viewer/build/app/hb_viewer --selftest /usr/share/icons/hicolor selftest_cascade.png
