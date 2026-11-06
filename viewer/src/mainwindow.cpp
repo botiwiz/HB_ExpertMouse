@@ -753,8 +753,13 @@ void MainWindow::clipboardPaste() {
     QUrl dest = cascade_->url();
     if (selection_.size() == 1 && selection_.first().isDir()) dest = selection_.first().url();
     if (!dest.isValid()) return;
-    KIO::Job* job = KIO::paste(QApplication::clipboard()->mimeData(), dest);
-    if (job) job->setUiDelegate(KIO::createDefaultJobUiDelegate(KJobUiDelegate::AutoHandlingEnabled, this));
+    const QMimeData* md = QApplication::clipboard()->mimeData();
+    QList<QUrl> urls = md ? KUrlMimeData::urlsFromMimeData(md) : QList<QUrl>();
+    if (urls.isEmpty()) return;
+    bool cut = md->data(QStringLiteral("application/x-kde-cutselection")) == "1";
+    KIO::CopyJob* job = cut ? KIO::move(urls, dest) : KIO::copy(urls, dest);
+    job->setUiDelegate(KIO::createDefaultJobUiDelegate(KJobUiDelegate::AutoHandlingEnabled, this));
+    if (cut) QApplication::clipboard()->clear();
 }
 
 // Activation in Dolphin: folders navigate, pictures/3D open in our viewer,
