@@ -62,6 +62,7 @@ private:
     QString path_, error_;
     QPoint pressPos_;
     bool rightDown_ = false, animating_ = false, interacting_ = false, pendingMove_ = false;
+    QSize windowSize_;                     // size last given to f3d's window (device px)
     QPointF lastPos_;                      // latest mouse position (widget px), sent once per frame
     Qt::KeyboardModifiers lastMods_;
     QTimer* settle_ = nullptr;             // ends wheel interaction

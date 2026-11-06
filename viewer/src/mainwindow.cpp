@@ -280,8 +280,8 @@ void MainWindow::loadDolphin() {
         part_->widget()->addAction(a);
     }
     if (ext_) {
-        connect(ext_, &KParts::NavigationExtension::openUrlRequest, this,
-                [this](const QUrl& u, const KParts::OpenUrlArguments& a) { onOpenUrlRequest(u, a); });
+        // KParts re-emits every openUrlRequest as openUrlRequestDelayed (next event-loop pass);
+        // listening to both opened every file twice. The delayed one is what hosts should use.
         connect(ext_, &KParts::NavigationExtension::openUrlRequestDelayed, this,
                 [this](const QUrl& u, const KParts::OpenUrlArguments& a) { onOpenUrlRequest(u, a); });
         connect(ext_, qOverload<const QPoint&, const KFileItemList&, const KParts::OpenUrlArguments&,
@@ -542,7 +542,15 @@ void MainWindow::buildCommands() {
 // commands too, so they show up in the menu and can be pinned to the toolbar.
 void MainWindow::addDolphinCommands() {
     if (!part_) return;
-    // Dolphin's own shortcuts win in the browser: drop ours (global/browser scope) that collide
+    // a few keys are always ours, even inside Dolphin's view: take them away from the part
+    const QList<QKeySequence> ours = {QKeySequence(Qt::CTRL | Qt::Key_T), QKeySequence(Qt::Key_F11)};
+    for (QAction* a : part_->actionCollection()->actions()) {
+        if (!a) continue;
+        QList<QKeySequence> keep;
+        for (const QKeySequence& k : a->shortcuts()) if (!ours.contains(k)) keep.append(k);
+        if (keep.size() != a->shortcuts().size()) a->setShortcuts(keep);
+    }
+    // otherwise Dolphin's own shortcuts win in the browser: drop ours (global/browser scope) that collide
     QSet<QKeySequence> partKeys;
     for (QAction* a : part_->actionCollection()->actions()) for (const QKeySequence& k : a->shortcuts()) partKeys.insert(k);
     for (const Command& c : cmds_) {
@@ -845,6 +853,12 @@ void MainWindow::updateSidePreview() {
     if (!sidePreview_ || !sidePreview_->isVisible()) return;
     if (selection_.isEmpty()) sidePreview_->clearItem();
     else if (sidePreview_->item().url() != selection_.first().url()) sidePreview_->showItem(selection_.first());
+}
+
+void MainWindow::selftestActivate(const QUrl& url, const QString& mime) {
+    KParts::OpenUrlArguments a;
+    a.setMimeType(mime);
+    if (ext_) Q_EMIT ext_->openUrlRequest(url, a);       // what DolphinPart::slotItemActivated does
 }
 
 void MainWindow::selftestViewModes() {
@@ -1265,15 +1279,13 @@ void MainWindow::cmdF3d() {
     QProcess::startDetached(f3d, {t});
 }
 
+// Full screen keeps the toolbar and status bar as they are; only Ctrl+T / Ctrl+B toggle them.
 void MainWindow::toggleFullscreen() {
     if (isFullScreen()) {
         if (wasMaximized_) showMaximized(); else showNormal();
-        tb_->setVisible(ini_->value("window/toolbar", true).toBool());
-        statusBar()->setVisible(ini_->value("window/statusbar", true).toBool());
     } else {
         saveSettings();
         wasMaximized_ = isMaximized();
-        tb_->hide(); statusBar()->hide();
         showFullScreen();
     }
 }

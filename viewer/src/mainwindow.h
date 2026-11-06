@@ -45,7 +45,8 @@ public:
     QString lastFolder() const;
     ColumnBrowser* cascade() const { return cascade_; }
     void setCascadeMode(bool on) { setCascade(on); }
-    void selftestViewModes();                     // prints which Dolphin view actions exist
+    void selftestViewModes();
+    void selftestActivate(const QUrl& url, const QString& mime);   // emit one Dolphin activation                     // prints which Dolphin view actions exist
     ModelView* modelView() const { return model_; }   // nullptr when built without f3d
     VideoView* videoView() const { return video_; }   // nullptr when built without mpv                    // browser folder from the previous session
 

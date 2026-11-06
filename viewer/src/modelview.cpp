@@ -91,7 +91,8 @@ bool ModelView::ensureEngine() {
     set("ui.axis", "true");
     set("ui.filename", "false");                           // the status bar shows it
     set("render.effect.tone_mapping", "true");
-    set("render.hdri.ambient", "false");
+    set("render.hdri.ambient", "true");                    // image-based ambient light (f3d's built-in HDRI)
+    set("render.effect.ambient_occlusion", "true");         // SSAO
     syncSize();
     tick_->start();
     return true;
@@ -102,12 +103,16 @@ double ModelView::renderScale() const { return devicePixelRatioF() * (interactin
 void ModelView::syncSize() {
     if (!engine_) return;
     double s = renderScale();
-    engine_->getWindow().setSize(std::max(1, int(width() * s)), std::max(1, int(height() * s)));
+    QSize want(std::max(1, int(width() * s)), std::max(1, int(height() * s)));
+    if (want == windowSize_) return;                        // only tell f3d about real size changes
+    windowSize_ = want;
+    engine_->getWindow().setSize(want.width(), want.height());
 }
 
 void ModelView::setInteracting(bool on) {
     if (on == interacting_) return;
     interacting_ = on;
+    if (!lowResInteraction) return;                         // full resolution always: nothing to change
     syncSize();
     requestFrame();                                         // switching back: one crisp full-res frame
 }
@@ -185,7 +190,12 @@ void ModelView::paintEvent(QPaintEvent*) {
     p.fillRect(rect(), kBg);
     if (!frame_.isNull()) {
         p.setRenderHint(QPainter::SmoothPixmapTransform, true);   // half-res frames while interacting
-        p.drawImage(QRectF(rect()), frame_);
+        if (interacting_ && lowResInteraction) p.drawImage(QRectF(rect()), frame_);   // half-res: upscale
+        else {
+            QImage f = frame_;                              // 1:1 in device pixels, never stretched
+            f.setDevicePixelRatio(devicePixelRatioF());
+            p.drawImage(QPointF(0, 0), f);
+        }
     }
     if (!error_.isEmpty() && path_.isEmpty()) {
         p.setPen(QColor(190, 190, 195));

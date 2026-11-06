@@ -12,6 +12,7 @@
 #include <KColorSchemeManager>
 #include <kcolorscheme_version.h>
 #include <QAbstractItemModel>
+#include <QFile>
 #include <QImage>
 #include <QOpenGLContext>
 #include <QApplication>
@@ -84,6 +85,15 @@ int main(int argc, char** argv) {
             printf("commands: %d\n", w->commandCount());
             int rc = w->dolphinLoaded() ? 0 : 3;
             if (qEnvironmentVariableIsSet("HBV_SELFTEST_MODES")) w->selftestViewModes();
+            if (QByteArray f = qgetenv("HBV_SELFTEST_OPEN"); !f.isEmpty()) {
+                // one activation of a non-viewable file must launch its default app exactly once
+                w->selftestActivate(QUrl::fromLocalFile(QString::fromLocal8Bit(f)), QStringLiteral("text/plain"));
+                QEventLoop l; QTimer::singleShot(4000, &l, &QEventLoop::quit); l.exec();
+                QFile log(QStringLiteral("/tmp/hbv_open.log"));
+                int n = log.open(QIODevice::ReadOnly) ? log.readAll().count('\n') : 0;
+                printf("external opens for one activation: %d -> %s\n", n, n == 1 ? "OK" : "FAIL");
+                if (n != 1) rc = 8;
+            }
             if (qEnvironmentVariableIsSet("HBV_SELFTEST_CASCADE")) {
                 ColumnBrowser* c = w->cascade();
                 int cols = c->columnCount();
