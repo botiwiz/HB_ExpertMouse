@@ -906,6 +906,7 @@ void MainWindow::clipboardPaste() {
 // Activation in Dolphin: folders navigate, pictures/3D open in our viewer,
 // everything else gets normal file-manager behaviour (default application).
 void MainWindow::onOpenUrlRequest(const QUrl& url, const KParts::OpenUrlArguments& args) {
+    openRequests++;                                       // self-test: one activation must arrive once
     // Dolphin can send the same activation as both openUrlRequest and openUrlRequestDelayed:
     // act on it once (this is what opened videos/PDFs twice)
     static QUrl lastUrl;

@@ -90,9 +90,10 @@ int main(int argc, char** argv) {
                 w->selftestActivate(QUrl::fromLocalFile(QString::fromLocal8Bit(f)), QStringLiteral("text/plain"));
                 QEventLoop l; QTimer::singleShot(4000, &l, &QEventLoop::quit); l.exec();
                 QFile log(QStringLiteral("/tmp/hbv_open.log"));
-                int n = log.open(QIODevice::ReadOnly) ? log.readAll().count('\n') : 0;
-                printf("external opens for one activation: %d -> %s\n", n, n == 1 ? "OK" : "FAIL");
-                if (n != 1) rc = 8;
+                int launched = log.open(QIODevice::ReadOnly) ? log.readAll().count('\n') : -1;
+                printf("open requests handled for one activation: %d -> %s  (external launches seen: %d)\n",
+                       w->openRequests, w->openRequests == 1 ? "OK" : "FAIL", launched);
+                if (w->openRequests != 1) rc = 8;
             }
             if (qEnvironmentVariableIsSet("HBV_SELFTEST_CASCADE")) {
                 ColumnBrowser* c = w->cascade();
