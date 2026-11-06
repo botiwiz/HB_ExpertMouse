@@ -1,142 +1,155 @@
 #include "modelview.h"
 #include <f3d/engine.h>
+#include <f3d/image.h>
 #include <f3d/interactor.h>
 #include <f3d/options.h>
 #include <f3d/scene.h>
 #include <f3d/window.h>
 #include <QCoreApplication>
+#include <QDateTime>
 #include <QKeyEvent>
 #include <QMouseEvent>
-#include <QOpenGLContext>
-#include <QOpenGLFunctions>
+#include <QPainter>
 #include <QTimer>
 #include <QWheelEvent>
 #include <algorithm>
+#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <vector>
 
-// f3d's external window first copies the bound framebuffer into its own and composites on
-// top of it (FrameBlitMode BlitToCurrent). Our FBO still holds the previous frame, which then
-// ghosts through, and renders triggered by input outside paintGL could surface stale frames.
-// So every f3d render starts from a freshly cleared framebuffer.
-void ModelView::beginGL() {
-    makeCurrent();
-    QOpenGLFunctions* f = context()->functions();
-    f->glClearColor(0.11f, 0.11f, 0.12f, 1.0f);
-    f->glClearDepthf(1.0f);
-    f->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-}
+static const QColor kBg(28, 28, 31);
 
-ModelView::ModelView(QWidget* parent) : QOpenGLWidget(parent) {
+ModelView::ModelView(QWidget* parent) : QWidget(parent) {
     setFocusPolicy(Qt::StrongFocus);
     setMouseTracking(true);
+    setAttribute(Qt::WA_OpaquePaintEvent);
+    frameTimer_ = new QTimer(this);
+    frameTimer_->setSingleShot(true);
+    frameTimer_->setInterval(0);
+    connect(frameTimer_, &QTimer::timeout, this, &ModelView::renderFrame);
+    tick_ = new QTimer(this);                              // f3d animations, notifications, smooth camera
+    tick_->setInterval(33);
+    connect(tick_, &QTimer::timeout, this, [this] {
+        if (!engine_ || !isVisible()) return;
+        try { inter_->triggerEventLoop(1.0 / 30.0); } catch (...) {}
+        if (animating_ || QDateTime::currentMSecsSinceEpoch() < busyUntil_) requestFrame();
+    });
 }
 
-ModelView::~ModelView() {
-    makeCurrent();            // f3d releases GL resources in its destructor
-    engine_.reset();
-    doneCurrent();
-}
+ModelView::~ModelView() = default;
 
 QString ModelView::f3dVersion() {
     try { return QString::fromStdString(f3d::engine::getLibInfo().VersionFull); } catch (...) { return {}; }
 }
 
-void ModelView::initializeGL() {
+bool ModelView::ensureEngine() {
+    if (engine_) return true;
     try {
         f3d::engine::autoloadPlugins();
-        // the dynamic plugins of the bundled f3d (assimp, occt, usd, alembic, draco...), when present
         QString app = QCoreApplication::applicationDirPath();
         std::vector<std::filesystem::path> dirs = {(app + "/../lib").toStdString(), (app + "/../lib/f3d").toStdString(), app.toStdString()};
         for (const char* p : {"assimp", "occt", "alembic", "draco", "usd", "hdf", "vdb"}) {
             try { f3d::engine::loadPlugin(p, dirs); } catch (...) {}
         }
-        f3d::context::function load = [this](const char* name) { return context()->getProcAddress(name); };
-        engine_ = std::make_unique<f3d::engine>(f3d::engine::createExternal(load));
+        engine_ = std::make_unique<f3d::engine>(f3d::engine::create(true));   // offscreen, own GL context
+        inter_ = &engine_->getInteractor();
     } catch (const std::exception& e) {
         error_ = QString("Could not start f3d: ") + e.what();
         engine_.reset();
-        return;
+        inter_ = nullptr;
+        return false;
     }
-    inter_ = &engine_->getInteractor();
     f3d::options& o = engine_->getOptions();
     auto set = [&o](const char* name, const char* value) { try { o.setAsString(name, value); } catch (...) {} };
-    set("render.background.color", "0.11,0.11,0.12");    // matches the image viewer
+    set("render.background.color", "0.11,0.11,0.12");      // matches the image viewer
     set("render.grid.enable", "true");
     set("ui.axis", "true");
-    set("ui.filename", "false");                         // the status bar shows it
+    set("ui.filename", "false");                           // the status bar shows it
     set("render.effect.tone_mapping", "true");
     set("render.hdri.ambient", "false");
-    engine_->getWindow().setSize(std::max(1, width()), std::max(1, height()));
-
-    tick_ = new QTimer(this);                            // f3d animations, notifications, smooth camera
-    tick_->setInterval(30);
-    connect(tick_, &QTimer::timeout, this, [this] {
-        if (!engine_ || !isVisible()) return;
-        beginGL();
-        inter_->triggerEventLoop(1.0 / 30.0);
-        doneCurrent();
-        update();
-    });
+    syncSize();
     tick_->start();
-    if (!pending_.isEmpty()) doLoad();
+    return true;
+}
+
+void ModelView::syncSize() {
+    if (!engine_) return;
+    qreal dpr = devicePixelRatioF();
+    engine_->getWindow().setSize(std::max(1, int(width() * dpr)), std::max(1, int(height() * dpr)));
 }
 
 void ModelView::load(const QString& path) {
-    pending_ = path;
-    if (engine_) doLoad();
-    else update();                                       // initializeGL will pick it up
-}
-
-void ModelView::unload() {
-    pending_.clear(); path_.clear();
-    if (!engine_) return;
-    makeCurrent();
-    try { engine_->getScene().clear(); } catch (...) {}
-    doneCurrent();
-    update();
-}
-
-void ModelView::doLoad() {
-    QString p = pending_;
-    pending_.clear();
     error_.clear();
+    if (!ensureEngine()) { update(); emit loaded(false); return; }
     bool ok = true;
-    beginGL();
     try {
         f3d::scene& sc = engine_->getScene();
         sc.clear();
-        sc.add(std::filesystem::path(p.toStdString()));
+        sc.add(std::filesystem::path(path.toStdString()));
         engine_->getWindow().getCamera().resetToBounds();
-        path_ = p;
+        path_ = path;
     } catch (const std::exception& e) {
         error_ = QString::fromLocal8Bit(e.what());
         ok = false;
     }
-    doneCurrent();
-    update();
+    animating_ = false;
+    renderFrame();                                          // first frame right away
     emit loaded(ok);
+}
+
+void ModelView::unload() {
+    path_.clear();
+    frame_ = QImage();
+    animating_ = false;
+    if (engine_) { try { engine_->getScene().clear(); } catch (...) {} }
+    update();
 }
 
 void ModelView::command(const QString& cmd) {
     if (!engine_) return;
-    beginGL();
+    if (cmd == "toggle_animation") animating_ = !animating_;
     try { inter_->triggerCommand(cmd.toStdString()); } catch (...) {}
-    doneCurrent();
+    busy();
+    requestFrame();
+}
+
+void ModelView::busy() { busyUntil_ = QDateTime::currentMSecsSinceEpoch() + 800; }
+
+void ModelView::requestFrame() { if (!frameTimer_->isActive()) frameTimer_->start(); }
+
+// One complete frame from f3d's offscreen window; the widget never sees partial renders.
+void ModelView::renderFrame() {
+    if (!engine_ || !isVisible()) return;
+    try {
+        f3d::image img = engine_->getWindow().renderToImage();
+        int w = (int)img.getWidth(), h = (int)img.getHeight(), ch = (int)img.getChannelCount();
+        if (w > 0 && h > 0 && (ch == 3 || ch == 4) && img.getChannelType() == f3d::image::ChannelType::BYTE) {
+            QImage q(w, h, ch == 4 ? QImage::Format_RGBA8888 : QImage::Format_RGB888);
+            const uint8_t* src = static_cast<const uint8_t*>(img.getContent());
+            size_t row = (size_t)w * ch;
+            for (int y = 0; y < h; y++) memcpy(q.scanLine(y), src + (size_t)(h - 1 - y) * row, row);   // bottom-up -> top-down
+            q.setDevicePixelRatio(devicePixelRatioF());
+            frame_ = q;
+        }
+    } catch (const std::exception& e) {
+        error_ = QString::fromLocal8Bit(e.what());
+    }
     update();
 }
 
-void ModelView::resizeGL(int w, int h) {
-    if (engine_) engine_->getWindow().setSize(std::max(1, w), std::max(1, h));
+void ModelView::paintEvent(QPaintEvent*) {
+    QPainter p(this);
+    p.fillRect(rect(), kBg);
+    if (!frame_.isNull()) p.drawImage(QPointF(0, 0), frame_);
+    if (!error_.isEmpty() && path_.isEmpty()) {
+        p.setPen(QColor(190, 190, 195));
+        p.drawText(rect(), Qt::AlignCenter | Qt::TextWordWrap, error_);
+    }
 }
 
-void ModelView::paintGL() {
-    QOpenGLFunctions* f = context()->functions();      // already current inside paintGL
-    f->glClearColor(0.11f, 0.11f, 0.12f, 1.0f);
-    f->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
-    if (engine_) { try { engine_->getWindow().render(); } catch (...) {} }
-}
+void ModelView::resizeEvent(QResizeEvent*) { syncSize(); requestFrame(); }
+void ModelView::showEvent(QShowEvent*) { syncSize(); requestFrame(); }
 
 // ---------------------------------------------------------------- input -> f3d
 void ModelView::mods(Qt::KeyboardModifiers m) {
@@ -158,33 +171,37 @@ static bool mapButton(Qt::MouseButton b, f3d::interactor::MouseButton& out) {
 void ModelView::mousePressEvent(QMouseEvent* e) {
     if (e->button() == Qt::RightButton) { rightDown_ = true; pressPos_ = e->globalPosition().toPoint(); }
     f3d::interactor::MouseButton b;
-    if (!inter_ || !mapButton(e->button(), b)) return QOpenGLWidget::mousePressEvent(e);
-    beginGL();
-    inter_->triggerMousePosition(e->position().x(), e->position().y());
-    mods(e->modifiers());
-    inter_->triggerMouseButton(f3d::interactor::InputAction::PRESS, b);
-    doneCurrent();
-    update();
+    if (!inter_ || !mapButton(e->button(), b)) return QWidget::mousePressEvent(e);
+    qreal dpr = devicePixelRatioF();
+    try {
+        inter_->triggerMousePosition(e->position().x() * dpr, e->position().y() * dpr);
+        mods(e->modifiers());
+        inter_->triggerMouseButton(f3d::interactor::InputAction::PRESS, b);
+    } catch (...) {}
+    requestFrame();
 }
 
 void ModelView::mouseMoveEvent(QMouseEvent* e) {
     if (!inter_) return;
-    beginGL();
-    inter_->triggerMousePosition(e->position().x(), e->position().y());
-    mods(e->modifiers());
-    doneCurrent();
-    update();
+    qreal dpr = devicePixelRatioF();
+    try {
+        inter_->triggerMousePosition(e->position().x() * dpr, e->position().y() * dpr);
+        mods(e->modifiers());
+    } catch (...) {}
+    if (e->buttons()) requestFrame();                        // only dragging changes the view
 }
 
 void ModelView::mouseReleaseEvent(QMouseEvent* e) {
     f3d::interactor::MouseButton b;
     if (inter_ && mapButton(e->button(), b)) {
-        beginGL();
-        inter_->triggerMousePosition(e->position().x(), e->position().y());
-        mods(e->modifiers());
-        inter_->triggerMouseButton(f3d::interactor::InputAction::RELEASE, b);
-        doneCurrent();
-        update();
+        qreal dpr = devicePixelRatioF();
+        try {
+            inter_->triggerMousePosition(e->position().x() * dpr, e->position().y() * dpr);
+            mods(e->modifiers());
+            inter_->triggerMouseButton(f3d::interactor::InputAction::RELEASE, b);
+        } catch (...) {}
+        busy();
+        requestFrame();
     }
     // right-click without dragging = our command menu (right-drag stays f3d's zoom)
     if (e->button() == Qt::RightButton && rightDown_) {
@@ -198,11 +215,9 @@ void ModelView::wheelEvent(QWheelEvent* e) {
     using W = f3d::interactor::WheelDirection;
     QPoint d = e->angleDelta();
     W dir = std::abs(d.y()) >= std::abs(d.x()) ? (d.y() > 0 ? W::FORWARD : W::BACKWARD) : (d.x() > 0 ? W::RIGHT : W::LEFT);
-    beginGL();
-    mods(e->modifiers());
-    inter_->triggerMouseWheel(dir);
-    doneCurrent();
-    update();
+    try { mods(e->modifiers()); inter_->triggerMouseWheel(dir); } catch (...) {}
+    busy();
+    requestFrame();
 }
 
 static std::string keySym(QKeyEvent* e) {
@@ -230,22 +245,24 @@ static std::string keySym(QKeyEvent* e) {
 }
 
 void ModelView::keyPressEvent(QKeyEvent* e) {
-    if (!inter_) return QOpenGLWidget::keyPressEvent(e);
-    beginGL();
-    mods(e->modifiers());
-    std::string ks = keySym(e);
-    if (!ks.empty()) inter_->triggerKeyboardKey(f3d::interactor::InputAction::PRESS, ks);
-    for (char16_t ch : e->text().toStdU16String()) inter_->triggerTextCharacter(ch);
-    doneCurrent();
-    update();
+    if (!inter_) return QWidget::keyPressEvent(e);
+    try {
+        mods(e->modifiers());
+        std::string ks = keySym(e);
+        if (!ks.empty()) inter_->triggerKeyboardKey(f3d::interactor::InputAction::PRESS, ks);
+        for (char16_t ch : e->text().toStdU16String()) inter_->triggerTextCharacter(ch);
+    } catch (...) {}
+    if (e->key() == Qt::Key_Space) animating_ = !animating_;   // f3d's default play/pause key
+    busy();
+    requestFrame();
 }
 
 void ModelView::keyReleaseEvent(QKeyEvent* e) {
-    if (!inter_) return QOpenGLWidget::keyReleaseEvent(e);
-    beginGL();
-    mods(e->modifiers());
-    std::string ks = keySym(e);
-    if (!ks.empty()) inter_->triggerKeyboardKey(f3d::interactor::InputAction::RELEASE, ks);
-    doneCurrent();
-    update();
+    if (!inter_) return QWidget::keyReleaseEvent(e);
+    try {
+        mods(e->modifiers());
+        std::string ks = keySym(e);
+        if (!ks.empty()) inter_->triggerKeyboardKey(f3d::interactor::InputAction::RELEASE, ks);
+    } catch (...) {}
+    requestFrame();
 }

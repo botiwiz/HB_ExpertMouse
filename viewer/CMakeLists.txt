@@ -44,9 +44,8 @@ target_link_libraries(hb_viewer hbcore Qt6::Widgets
 # pass -DCMAKE_PREFIX_PATH=<sdk>). Without it, 3D files open in an external f3d.
 find_package(f3d CONFIG QUIET COMPONENTS library)
 if(f3d_FOUND)
-  find_package(Qt6 REQUIRED COMPONENTS OpenGLWidgets)
   target_sources(hb_viewer PRIVATE src/modelview.cpp)
-  target_link_libraries(hb_viewer f3d::libf3d Qt6::OpenGLWidgets)
+  target_link_libraries(hb_viewer f3d::libf3d)
   target_compile_definitions(hb_viewer PRIVATE HBV_HAVE_F3D)
   # AppImage layout: usr/bin/hb_viewer + usr/lib/libf3d*.so
   set_target_properties(hb_viewer PROPERTIES BUILD_RPATH "$ORIGIN/../lib;${f3d_DIR}/../../../lib" INSTALL_RPATH "$ORIGIN/../lib")

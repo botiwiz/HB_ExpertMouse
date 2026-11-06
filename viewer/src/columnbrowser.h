@@ -19,7 +19,7 @@ public:
     using QColumnView::QColumnView;
 signals:
     void menuRequested(QAbstractItemView* column, QPoint pos);
-    void horizontalKey(bool right);                 // Left/Right pressed in any column
+    void navKey(int key);                           // arrow keys / Enter pressed in any column
 protected:
     QAbstractItemView* createColumn(const QModelIndex& root) override;
     bool eventFilter(QObject* o, QEvent* e) override;
@@ -38,7 +38,8 @@ public:
     QAbstractItemView* view() const { return view_; }
     int columnCount() const;                             // for the self-test
     QUrl currentUrl() const;                             // item with the keyboard cursor
-    void pressKey(int key);                              // self-test: simulate Left/Right
+    void pressKey(int key);                              // self-test: simulate a key press
+    int currentRow() const;
 
 signals:
     void activated(const KFileItem& item);              // double-click / Enter on a file
@@ -52,6 +53,8 @@ private:
     void showPreview(const QModelIndex& proxyIndex);
     void goLeft();
     void goRight();
+    void goVertical(int delta);
+    void focusColumnOf(const QModelIndex& proxyIndex);
     void selectIndex(const QModelIndex& proxyIndex);     // current + selected + focus its column
     void selectFirstChildOfPending();
 

@@ -10,6 +10,9 @@
 #include <QCoreApplication>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
+#include <QTimer>
+#include <algorithm>
+#include <iterator>
 #include <QLabel>
 #include <QListView>
 #include <QPointer>
@@ -28,8 +31,10 @@ QAbstractItemView* CascadeView::createColumn(const QModelIndex& root) {
 bool CascadeView::eventFilter(QObject* o, QEvent* e) {
     if (e->type() == QEvent::KeyPress) {
         auto* k = static_cast<QKeyEvent*>(e);
-        if ((k->key() == Qt::Key_Left || k->key() == Qt::Key_Right) && !(k->modifiers() & ~Qt::KeypadModifier)) {
-            emit horizontalKey(k->key() == Qt::Key_Right);
+        // the cascade's own "current item" drives navigation, whichever column has focus
+        static const int keys[] = {Qt::Key_Left, Qt::Key_Right, Qt::Key_Up, Qt::Key_Down, Qt::Key_Return, Qt::Key_Enter};
+        if (std::find(std::begin(keys), std::end(keys), k->key()) != std::end(keys) && !(k->modifiers() & ~Qt::KeypadModifier)) {
+            emit navKey(k->key());
             return true;
         }
     }
@@ -66,7 +71,7 @@ ColumnBrowser::ColumnBrowser(QWidget* parent) : QWidget(parent) {
     view_->setPreviewWidget(pane_);
 
     connect(view_, &QColumnView::updatePreviewWidget, this, &ColumnBrowser::showPreview);
-    connect(view_, &CascadeView::horizontalKey, this, [this](bool right) { if (right) goRight(); else goLeft(); });
+    connect(view_, &CascadeView::navKey, this, &ColumnBrowser::pressKey);
     // Right on a folder that KIO is still listing: pick its first item as soon as items arrive,
     // and once more when the listing completes (sorting may have changed which item is first)
     connect(proxy_, &QAbstractItemModel::rowsInserted, this, [this](const QModelIndex& parent) {
@@ -166,9 +171,12 @@ void ColumnBrowser::selectIndex(const QModelIndex& i) {
     if (!i.isValid()) return;
     view_->setCurrentIndex(i);
     view_->selectionModel()->select(i, QItemSelectionModel::ClearAndSelect);
-    // keyboard focus goes to the column that shows this item
-    for (QAbstractItemView* col : view_->findChildren<QAbstractItemView*>())
-        if (col != view_ && col->rootIndex() == i.parent()) { col->setFocus(); col->scrollTo(i); break; }
+    // keyboard focus goes to the column showing this item; QColumnView may create that column
+    // only after this call, so try now and again once the event loop has run
+    QPersistentModelIndex p(i);
+    focusColumnOf(i);
+    QTimer::singleShot(0, this, [this, p] { if (p.isValid() && view_->currentIndex() == QModelIndex(p)) focusColumnOf(p); });
+    QTimer::singleShot(60, this, [this, p] { if (p.isValid() && view_->currentIndex() == QModelIndex(p)) focusColumnOf(p); });
 }
 
 void ColumnBrowser::selectFirstChildOfPending() {
@@ -181,7 +189,43 @@ void ColumnBrowser::selectFirstChildOfPending() {
 }
 
 QUrl ColumnBrowser::currentUrl() const { KFileItem it = itemAt(view_->currentIndex()); return it.isNull() ? QUrl() : it.url(); }
-void ColumnBrowser::pressKey(int key) { if (key == Qt::Key_Right) goRight(); else if (key == Qt::Key_Left) goLeft(); }
+void ColumnBrowser::pressKey(int key) {
+    switch (key) {
+    case Qt::Key_Right: goRight(); break;
+    case Qt::Key_Left: goLeft(); break;
+    case Qt::Key_Up: goVertical(-1); break;
+    case Qt::Key_Down: goVertical(1); break;
+    case Qt::Key_Return: case Qt::Key_Enter: {
+        KFileItem it = itemAt(view_->currentIndex());
+        if (it.isNull()) break;
+        if (it.isDir()) goRight(); else emit activated(it);
+        break;
+    }
+    }
+}
+
+int ColumnBrowser::currentRow() const { return view_->currentIndex().row(); }
+
+void ColumnBrowser::goVertical(int delta) {
+    enterPending_ = QPersistentModelIndex();
+    QModelIndex cur = view_->currentIndex();
+    if (!cur.isValid()) {
+        if (proxy_->rowCount(view_->rootIndex()) > 0) selectIndex(proxy_->index(0, 0, view_->rootIndex()));
+        return;
+    }
+    QModelIndex next = cur.sibling(cur.row() + delta, 0);
+    if (next.isValid()) selectIndex(next);
+}
+
+void ColumnBrowser::focusColumnOf(const QModelIndex& i) {
+    for (QAbstractItemView* col : view_->findChildren<QAbstractItemView*>())
+        if (col != view_ && col->rootIndex() == i.parent()) {
+            if (col->currentIndex() != i) col->setCurrentIndex(i);   // keeps the column's own cursor in step
+            col->setFocus();
+            col->scrollTo(i);
+            return;
+        }
+}
 
 void ColumnBrowser::goLeft() {
     enterPending_ = QPersistentModelIndex();

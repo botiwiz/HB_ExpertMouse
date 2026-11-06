@@ -14,6 +14,7 @@
 #include <QPalette>
 #include <QStyleFactory>
 #include <QEventLoop>
+#include <QKeyEvent>
 #include <QTimer>
 #include <cstdio>
 #include <cstring>
@@ -85,23 +86,34 @@ int main(int argc, char** argv) {
                 printf("cascade: columns=%d folder=%s selected=%lld\n", cols, c->url().toDisplayString().toLocal8Bit().constData(),
                        (long long)c->selectedItems().size());
                 if (cols < 2) rc = 5;
-                // keyboard: Right enters the selected folder (first item), Left goes back to it
+                // keyboard, as real key presses into whatever widget has focus
                 auto wait = [](int ms) { QEventLoop l; QTimer::singleShot(ms, &l, &QEventLoop::quit); l.exec(); };
+                w->activateWindow();
+                c->view()->setFocus();
+                auto press = [&](int key) {
+                    QWidget* f = QApplication::focusWidget() ? QApplication::focusWidget() : c->view();
+                    QKeyEvent ev(QEvent::KeyPress, key, Qt::NoModifier);
+                    QApplication::sendEvent(f, &ev);
+                    wait(key == Qt::Key_Right ? 2000 : 300);
+                };
+                auto dir = [](const QUrl& u) { return u.adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash); };
                 QUrl start = c->currentUrl();
-                c->pressKey(Qt::Key_Right); wait(2000);
-                QUrl in = c->currentUrl();
-                c->pressKey(Qt::Key_Left); wait(300);
-                QUrl back = c->currentUrl();
-                bool okIn = in.adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash) == start.adjusted(QUrl::StripTrailingSlash);
-                printf("cascade keys: start=%s right=%s left=%s -> %s\n", start.path().toLocal8Bit().constData(),
-                       in.path().toLocal8Bit().constData(), back.path().toLocal8Bit().constData(),
-                       okIn && back == start ? "OK" : "FAIL");
-                if (!(okIn && back == start)) rc = 6;
+                press(Qt::Key_Right); QUrl in = c->currentUrl(); int inRow = c->currentRow();
+                press(Qt::Key_Down);  QUrl in2 = c->currentUrl(); int in2Row = c->currentRow();
+                press(Qt::Key_Left);  QUrl back = c->currentUrl();
+                press(Qt::Key_Down);  QUrl sib = c->currentUrl();
+                bool ok = dir(in) == start.adjusted(QUrl::StripTrailingSlash) && inRow == 0 &&
+                          dir(in2) == dir(in) && in2Row == 1 && back == start && dir(sib) == dir(start) && sib != start;
+                printf("cascade keys: start=%s right=%s(row %d) down=%s(row %d) left=%s down=%s -> %s\n",
+                       start.path().toLocal8Bit().constData(), in.path().toLocal8Bit().constData(), inRow,
+                       in2.path().toLocal8Bit().constData(), in2Row, back.path().toLocal8Bit().constData(),
+                       sib.path().toLocal8Bit().constData(), ok ? "OK" : "FAIL");
+                if (!ok) rc = 6;
             }
 #ifdef HBV_HAVE_F3D
             printf("f3d: %s\n", ModelView::f3dVersion().toLocal8Bit().constData());
             if (ModelView* m = w->modelView(); m && !m->path().isEmpty()) {
-                QImage fb = m->grabFramebuffer();
+                QImage fb = m->frame();
                 // count pixels that differ from the background: >0 means the model was drawn
                 QRgb bg = fb.isNull() ? 0 : fb.pixel(2, 2);
                 long diff = 0;

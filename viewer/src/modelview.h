@@ -1,15 +1,18 @@
-// Embedded 3D model viewer: libf3d (https://f3d.app) rendering into a QOpenGLWidget.
-// Mouse/keyboard go to f3d's own interactor, so all f3d controls work (left = rotate,
-// middle = pan, right/wheel = zoom, plus f3d's keys; F1 is ours, f3d's cheatsheet is a command).
+// Embedded 3D model viewer: libf3d (https://f3d.app) renders OFFSCREEN into its own GL
+// context; this widget only ever paints complete frames read back from it. Sharing Qt's GL
+// surface (QOpenGLWidget) caused ghosting and stale frames, because f3d/VTK render from input
+// events too, composite over the bound framebuffer and cache GL state.
+// Mouse/keyboard go to f3d's own interactor, so all f3d controls work.
 #pragma once
-#include <QOpenGLWidget>
+#include <QImage>
 #include <QPoint>
+#include <QWidget>
 #include <memory>
 
 namespace f3d { class engine; class interactor; }
 class QTimer;
 
-class ModelView : public QOpenGLWidget {
+class ModelView : public QWidget {
     Q_OBJECT
 public:
     explicit ModelView(QWidget* parent = nullptr);
@@ -21,6 +24,7 @@ public:
     QString path() const { return path_; }
     QString error() const { return error_; }
     bool engineOk() const { return engine_ != nullptr; }
+    QImage frame() const { return frame_; }   // last complete frame (self-test)
     static QString f3dVersion();
 
 signals:
@@ -28,9 +32,9 @@ signals:
     void loaded(bool ok);
 
 protected:
-    void initializeGL() override;
-    void resizeGL(int w, int h) override;
-    void paintGL() override;
+    void paintEvent(QPaintEvent*) override;
+    void resizeEvent(QResizeEvent*) override;
+    void showEvent(QShowEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
     void mouseMoveEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
@@ -39,14 +43,19 @@ protected:
     void keyReleaseEvent(QKeyEvent*) override;
 
 private:
-    void doLoad();
-    void beginGL();                        // make current + clear (see .cpp)
+    bool ensureEngine();
+    void requestFrame();                   // coalesced: at most one render per event-loop pass
+    void renderFrame();
     void mods(Qt::KeyboardModifiers m);
+    void syncSize();
+    void busy();                           // keep refreshing for a moment (smooth camera, notifications)
 
     std::unique_ptr<f3d::engine> engine_;
     f3d::interactor* inter_ = nullptr;
-    QTimer* tick_ = nullptr;
-    QString path_, pending_, error_;
+    QTimer *tick_ = nullptr, *frameTimer_ = nullptr;
+    QImage frame_;
+    QString path_, error_;
     QPoint pressPos_;
-    bool rightDown_ = false;
+    bool rightDown_ = false, animating_ = false;
+    qint64 busyUntil_ = 0;
 };
