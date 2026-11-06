@@ -92,7 +92,7 @@ bool ModelView::ensureEngine() {
     set("ui.filename", "false");                           // the status bar shows it
     set("render.effect.tone_mapping", "true");
     set("render.hdri.ambient", "true");                    // image-based ambient light (f3d's built-in HDRI)
-    set("render.effect.ambient_occlusion", "true");         // SSAO
+    set("render.effect.ambient_occlusion", ao_ ? "true" : "false");   // SSAO
     set("render.effect.antialiasing.mode", "fxaa");         // anti-aliasing (cheap; good at half resolution)
     set("ui.scale", halfRes_ ? "0.5" : "1.0");
     syncSize();
@@ -105,6 +105,13 @@ double ModelView::renderScale() const { return devicePixelRatioF() * (halfRes_ ?
 // Constant half resolution: a quarter of the pixels to render and read back. f3d draws its
 // overlays (axis, text) in render pixels, so ui.scale is halved to keep them their normal
 // size once the frame is scaled up; FXAA smooths the edges.
+void ModelView::setAmbientOcclusion(bool on) {
+    ao_ = on;
+    if (!engine_) return;
+    try { engine_->getOptions().setAsString("render.effect.ambient_occlusion", on ? "true" : "false"); } catch (...) {}
+    requestFrame();
+}
+
 void ModelView::setHalfRes(bool on) {
     halfRes_ = on;
     if (!engine_) return;

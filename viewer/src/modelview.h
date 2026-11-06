@@ -29,6 +29,8 @@ public:
     QString backend() const;                 // EGL / GLX / OSMesa (software)
     void setHalfRes(bool on);                // constant half-resolution rendering (+ FXAA)
     bool halfRes() const { return halfRes_; }
+    void setAmbientOcclusion(bool on);       // SSAO
+    bool ambientOcclusion() const { return ao_; }
 
 signals:
     void contextMenuRequested(QPoint globalPos);
@@ -62,7 +64,7 @@ private:
     QImage frame_;
     QString path_, error_;
     QPoint pressPos_;
-    bool halfRes_ = true;
+    bool halfRes_ = true, ao_ = true;
     bool rightDown_ = false, animating_ = false, interacting_ = false, pendingMove_ = false;
     QSize windowSize_;                     // size last given to f3d's window (device px)
     QPointF lastPos_;                      // latest mouse position (widget px), sent once per frame

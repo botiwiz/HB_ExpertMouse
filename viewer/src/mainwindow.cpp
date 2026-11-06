@@ -494,6 +494,8 @@ void MainWindow::buildCommands() {
             else if (c.id == "back_browser") scoped({K(Qt::Key_Escape)});
             else if (c.id == "f3d") scoped({K(Qt::CTRL | Qt::Key_D)});
         }
+        addCmd("f3d_ssao", "Ambient occlusion", "3D", "lighttable", {}, [this] {
+            model_->setAmbientOcclusion(!model_->ambientOcclusion()); }, nullptr, [this] { return model_->ambientOcclusion(); });
         addCmd("f3d_halfres", "Half resolution, anti-aliased (faster)", "3D", "speedometer", {}, [this] {
             model_->setHalfRes(!model_->halfRes()); }, nullptr, [this] { return model_->halfRes(); });
     }
@@ -757,6 +759,7 @@ void MainWindow::loadSettings() {
     sidePreview_->setVisible(s.value("browser/preview_panel", false).toBool());
 #ifdef HBV_HAVE_F3D
     if (model_) model_->setHalfRes(s.value("view/f3d_halfres", true).toBool());
+    if (model_) model_->setAmbientOcclusion(s.value("view/f3d_ssao", true).toBool());
 #endif
     if (!s.value("favorites/added_view_buttons", false).toBool()) {     // existing users get the new buttons once
         for (const char* id : {"preview_panel", "view_mode"})
@@ -771,6 +774,11 @@ void MainWindow::loadSettings() {
         int i = favs_.indexOf("f3d_cheatsheet");
         if (!favs_.contains("f3d_halfres")) favs_.insert(i >= 0 ? i : favs_.size(), "f3d_halfres");
         s.setValue("favorites/added_f3d_halfres", true);
+    }
+    if (!s.value("favorites/added_f3d_ssao", false).toBool()) {         // once: ambient occlusion toggle
+        int i = favs_.indexOf("f3d_cheatsheet");
+        if (!favs_.contains("f3d_ssao")) favs_.insert(i >= 0 ? i : favs_.size(), "f3d_ssao");
+        s.setValue("favorites/added_f3d_ssao", true);
     }
 }
 
@@ -794,6 +802,7 @@ void MainWindow::saveSettings() {
     s.setValue("browser/preview_panel", sidePreview_->isVisible());
 #ifdef HBV_HAVE_F3D
     if (model_) s.setValue("view/f3d_halfres", model_->halfRes());
+    if (model_) s.setValue("view/f3d_ssao", model_->ambientOcclusion());
 #endif
     if (part_ && part_->url().isValid()) s.setValue("browser/folder", part_->url().toString());
 }
