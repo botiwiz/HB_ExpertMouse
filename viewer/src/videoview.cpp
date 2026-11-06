@@ -104,7 +104,10 @@ MpvWidget::MpvWidget(QWidget* parent) : QOpenGLWidget(parent) {
     m.set_option_string(mpv_, "hwdec", "auto-safe");
     m.set_option_string(mpv_, "keep-open", "yes");    // stay on the last frame at the end
     m.set_option_string(mpv_, "idle", "yes");
-    m.set_option_string(mpv_, "terminal", "no");
+    if (qEnvironmentVariableIsSet("HBV_MPV_LOG")) {          // diagnostics: mpv's own log on stderr
+        m.set_option_string(mpv_, "terminal", "yes");
+        m.set_option_string(mpv_, "msg-level", "all=v");
+    } else m.set_option_string(mpv_, "terminal", "no");
     m.set_option_string(mpv_, "input-default-bindings", "no");
     m.set_option_string(mpv_, "osc", "no");
     m.set_option_string(mpv_, "ytdl", "no");

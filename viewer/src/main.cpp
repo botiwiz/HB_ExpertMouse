@@ -13,6 +13,7 @@
 #include <kcolorscheme_version.h>
 #include <QAbstractItemModel>
 #include <QImage>
+#include <QOpenGLContext>
 #include <QApplication>
 #include <QPalette>
 #include <QStyleFactory>
@@ -148,7 +149,9 @@ int main(int argc, char** argv) {
                     lit = 0;
                     for (int y = 0; y < f.height(); y += 4) for (int x = 0; x < f.width(); x += 4) if (qGray(f.pixel(x, y)) > 30) lit++;
                 }
-                printf("video: %s  %s  lit_px=%ld\n", v->timeText().toLocal8Bit().constData(), v->infoText().toLocal8Bit().constData(), lit);
+                printf("video: %s  %s  lit_px=%ld  error='%s'  gl=%s\n", v->timeText().toLocal8Bit().constData(),
+                       v->infoText().toLocal8Bit().constData(), lit, v->video()->error().toLocal8Bit().constData(),
+                       v->video()->context() ? (v->video()->context()->isOpenGLES() ? "GLES" : "GL") : "none");
                 f.save(shot + ".video.png");
                 if (v->video()->position <= 0 || lit < 100) rc = 7;
             }
