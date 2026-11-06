@@ -205,6 +205,7 @@ void ColumnBrowser::pressKey(int key) {
 }
 
 int ColumnBrowser::currentRow() const { return view_->currentIndex().row(); }
+int ColumnBrowser::siblingCount() const { QModelIndex c = view_->currentIndex(); return c.isValid() ? proxy_->rowCount(c.parent()) : 0; }
 
 void ColumnBrowser::goVertical(int delta) {
     enterPending_ = QPersistentModelIndex();

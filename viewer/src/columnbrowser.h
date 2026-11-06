@@ -40,6 +40,7 @@ public:
     QUrl currentUrl() const;                             // item with the keyboard cursor
     void pressKey(int key);                              // self-test: simulate a key press
     int currentRow() const;
+    int siblingCount() const;                            // rows in the current item's column
 
 signals:
     void activated(const KFileItem& item);              // double-click / Enter on a file

@@ -101,10 +101,15 @@ int main(int argc, char** argv) {
                 press(Qt::Key_Right); QUrl in = c->currentUrl(); int inRow = c->currentRow();
                 press(Qt::Key_Down);  QUrl in2 = c->currentUrl(); int in2Row = c->currentRow();
                 press(Qt::Key_Left);  QUrl back = c->currentUrl();
-                press(Qt::Key_Down);  QUrl sib = c->currentUrl();
+                // one more vertical step in the parent column: Up if possible (start may be the last row)
+                int backRow = c->currentRow(), rows = c->siblingCount();
+                press(backRow > 0 ? Qt::Key_Up : Qt::Key_Down);
+                QUrl sib = c->currentUrl();
+                bool sibOk = rows < 2 ? sib == start : (dir(sib) == dir(start) && sib != start &&
+                             c->currentRow() == (backRow > 0 ? backRow - 1 : backRow + 1));
                 bool ok = dir(in) == start.adjusted(QUrl::StripTrailingSlash) && inRow == 0 &&
-                          dir(in2) == dir(in) && in2Row == 1 && back == start && dir(sib) == dir(start) && sib != start;
-                printf("cascade keys: start=%s right=%s(row %d) down=%s(row %d) left=%s down=%s -> %s\n",
+                          dir(in2) == dir(in) && in2Row == 1 && back == start && sibOk;
+                printf("cascade keys: start=%s right=%s(row %d) down=%s(row %d) left=%s up/down=%s -> %s\n",
                        start.path().toLocal8Bit().constData(), in.path().toLocal8Bit().constData(), inRow,
                        in2.path().toLocal8Bit().constData(), in2Row, back.path().toLocal8Bit().constData(),
                        sib.path().toLocal8Bit().constData(), ok ? "OK" : "FAIL");
