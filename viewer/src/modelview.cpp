@@ -93,12 +93,25 @@ bool ModelView::ensureEngine() {
     set("render.effect.tone_mapping", "true");
     set("render.hdri.ambient", "true");                    // image-based ambient light (f3d's built-in HDRI)
     set("render.effect.ambient_occlusion", "true");         // SSAO
+    set("render.effect.antialiasing.mode", "fxaa");         // anti-aliasing (cheap; good at half resolution)
+    set("ui.scale", halfRes_ ? "0.5" : "1.0");
     syncSize();
     tick_->start();
     return true;
 }
 
-double ModelView::renderScale() const { return devicePixelRatioF() * (interacting_ && lowResInteraction ? 0.5 : 1.0); }
+double ModelView::renderScale() const { return devicePixelRatioF() * (halfRes_ ? 0.5 : 1.0); }
+
+// Constant half resolution: a quarter of the pixels to render and read back. f3d draws its
+// overlays (axis, text) in render pixels, so ui.scale is halved to keep them their normal
+// size once the frame is scaled up; FXAA smooths the edges.
+void ModelView::setHalfRes(bool on) {
+    halfRes_ = on;
+    if (!engine_) return;
+    try { engine_->getOptions().setAsString("ui.scale", on ? "0.5" : "1.0"); } catch (...) {}
+    syncSize();
+    requestFrame();
+}
 
 void ModelView::syncSize() {
     if (!engine_) return;
@@ -109,13 +122,7 @@ void ModelView::syncSize() {
     engine_->getWindow().setSize(want.width(), want.height());
 }
 
-void ModelView::setInteracting(bool on) {
-    if (on == interacting_) return;
-    interacting_ = on;
-    if (!lowResInteraction) return;                         // full resolution always: nothing to change
-    syncSize();
-    requestFrame();                                         // switching back: one crisp full-res frame
-}
+void ModelView::setInteracting(bool on) { interacting_ = on; }   // resolution no longer changes while moving
 
 void ModelView::sendPos(QPointF p) {
     double s = renderScale();
@@ -190,7 +197,10 @@ void ModelView::paintEvent(QPaintEvent*) {
     p.fillRect(rect(), kBg);
     if (!frame_.isNull()) {
         p.setRenderHint(QPainter::SmoothPixmapTransform, true);   // half-res frames while interacting
-        if (interacting_ && lowResInteraction) p.drawImage(QRectF(rect()), frame_);   // half-res: upscale
+        if (halfRes_) {                                     // half resolution: smooth upscale
+            p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+            p.drawImage(QRectF(rect()), frame_);
+        }
         else {
             QImage f = frame_;                              // 1:1 in device pixels, never stretched
             f.setDevicePixelRatio(devicePixelRatioF());

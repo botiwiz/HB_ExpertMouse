@@ -27,7 +27,8 @@ public:
     QImage frame() const { return frame_; }   // last complete frame (self-test)
     static QString f3dVersion();
     QString backend() const;                 // EGL / GLX / OSMesa (software)
-    bool lowResInteraction = false;          // half-res renders while dragging (softer, faster)
+    void setHalfRes(bool on);                // constant half-resolution rendering (+ FXAA)
+    bool halfRes() const { return halfRes_; }
 
 signals:
     void contextMenuRequested(QPoint globalPos);
@@ -61,6 +62,7 @@ private:
     QImage frame_;
     QString path_, error_;
     QPoint pressPos_;
+    bool halfRes_ = true;
     bool rightDown_ = false, animating_ = false, interacting_ = false, pendingMove_ = false;
     QSize windowSize_;                     // size last given to f3d's window (device px)
     QPointF lastPos_;                      // latest mouse position (widget px), sent once per frame

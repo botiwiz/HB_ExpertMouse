@@ -494,8 +494,8 @@ void MainWindow::buildCommands() {
             else if (c.id == "back_browser") scoped({K(Qt::Key_Escape)});
             else if (c.id == "f3d") scoped({K(Qt::CTRL | Qt::Key_D)});
         }
-        addCmd("f3d_lowres", "Lower resolution while moving (faster, softer)", "3D", "speedometer", {}, [this] {
-            model_->lowResInteraction = !model_->lowResInteraction; }, nullptr, [this] { return model_->lowResInteraction; });
+        addCmd("f3d_halfres", "Half resolution, anti-aliased (faster)", "3D", "speedometer", {}, [this] {
+            model_->setHalfRes(!model_->halfRes()); }, nullptr, [this] { return model_->halfRes(); });
     }
 #endif
 #ifdef HBV_HAVE_MPV
@@ -756,7 +756,7 @@ void MainWindow::loadSettings() {
     places_->setVisible(s.value("browser/places", true).toBool());
     sidePreview_->setVisible(s.value("browser/preview_panel", false).toBool());
 #ifdef HBV_HAVE_F3D
-    if (model_) model_->lowResInteraction = s.value("view/f3d_lowres", false).toBool();
+    if (model_) model_->setHalfRes(s.value("view/f3d_halfres", true).toBool());
 #endif
     if (!s.value("favorites/added_view_buttons", false).toBool()) {     // existing users get the new buttons once
         for (const char* id : {"preview_panel", "view_mode"})
@@ -788,7 +788,7 @@ void MainWindow::saveSettings() {
     s.setValue("browser/view_mode", viewMode_);
     s.setValue("browser/preview_panel", sidePreview_->isVisible());
 #ifdef HBV_HAVE_F3D
-    if (model_) s.setValue("view/f3d_lowres", model_->lowResInteraction);
+    if (model_) s.setValue("view/f3d_halfres", model_->halfRes());
 #endif
     if (part_ && part_->url().isValid()) s.setValue("browser/folder", part_->url().toString());
 }
