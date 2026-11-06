@@ -41,6 +41,20 @@ Then `chmod +x HB_Viewer-x86_64.AppImage` and run it, optionally with a file or 
 - **Keyboard:** goes to f3d itself, so all of f3d's keys work (G grid, E edges, X axis, Space animation…). The "f3d keyboard cheatsheet" command lists them.
 - **Commands** (menu "3D", all can be pinned as Favorites): Reset camera, Front/Top/Right/Isometric view, Toggle grid, Toggle edges, Toggle axis, Toggle orthographic camera, Play/pause animation, FPS counter, Model info, f3d cheatsheet. Ctrl+D opens the model in the external f3d app.
 
+## Cascade view (columns)
+
+Press **Ctrl+4** or **F8**, or use "Cascade (column) view" in the Browser menu, to switch the browser to a cascade (Miller-column) explorer. Press it again to go back to the Dolphin view. The app remembers your choice.
+
+- Each folder you select opens its contents in the next column to the right. The columns start at Home, or at `/` for folders outside Home. They work on network locations too.
+- The **last column previews the selected file**:
+  - for pictures, a large image made by HB Viewer's own decoder (instant even for multi-GB PSD/PSB files) plus dimensions and format;
+  - for other files, your system's thumbnail (videos, PDFs, documents…);
+  - name, type, size and date for everything.
+- Opening works the same as in Dolphin view: pictures and 3D files open in the viewer, everything else in its default app.
+- Keys inside the cascade: Ctrl+C / Ctrl+X / Ctrl+V copy, cut and paste; F2 renames; Delete moves to trash; Alt+Enter shows Properties; Ctrl+H shows hidden files.
+- The right-click menu matches Dolphin's: View in HB Viewer, Open With, cut/copy/paste/rename/trash, your service menus, Properties and the HB Viewer commands. Files can be dragged out to other apps.
+- Places and the breadcrumb bar are shared with the Dolphin view and follow the selected column.
+
 ## Browser = Dolphin
 
 The app opens in the browser at your last folder. Launching it with a folder does the same; launching it with an image file opens the viewer directly.

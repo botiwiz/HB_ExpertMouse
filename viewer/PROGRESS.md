@@ -21,7 +21,8 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - src/cli.*        --convert; src/cli_main.cpp = hb_convert (CLI-only build)
 - src/imageview.*  viewer canvas (QPainter, tiles, mips, zoom/rotate, QMovie animation)
 - src/mainwindow.* DolphinPart host, Places + KUrlNavigator, command registry, favorites, loading jobs
-- src/main.cpp     app, Breeze Dark, --selftest
+- src/columnbrowser.* cascade view (QColumnView + KDirModel, preview column)
+- src/main.cpp     app, Breeze Dark, --selftest (HBV_SELFTEST_CASCADE=1 tests the cascade)
 - tests/viewtest.cpp offscreen render test (CLI-only build)
 - Local test build: cmake -S . -B build/cli -DHBV_CLI_ONLY=ON (only Qt6 base needed)
 - build-appimage.sh, appdir/, CI job `viewer-appimage` (debian:trixie container) in .github/workflows/build.yml
@@ -58,7 +59,7 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
   (HBV_HAVE_F3D); CI downloads f3d v4.0.1 release, build-appimage.sh bundles libf3d + NEEDED closure.
 - f3d source for reference: git clone --depth 1 https://github.com/f3d-app/f3d (tag v4.0.1).
 
-## IN PROGRESS: Cascade (Miller column) explorer view
+## DONE (CI: columns=6 for /usr/share/icons/hicolor): Cascade (Miller column) explorer view
 - src/columnbrowser.*: QColumnView + KDirModel + KDirSortFilterProxyModel + KFilePreviewGenerator,
   preview column (our decoder for images incl. huge PSD, KIO::PreviewJob for other types) + file info.
 - Toggle vs Dolphin view (command "cascade", Ctrl+4); shares Places + KUrlNavigator; same activation rules
