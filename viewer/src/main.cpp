@@ -139,9 +139,15 @@ int main(int argc, char** argv) {
 #endif
 #ifdef HBV_HAVE_MPV
             if (VideoView* v = w->videoView(); v && !v->path().isEmpty()) {
-                QImage f = v->video()->grabFramebuffer();
+                // sample a few frames (a single grab right after a long idle wait can come back empty)
+                QImage f;
                 long lit = 0;
-                for (int y = 0; y < f.height(); y += 4) for (int x = 0; x < f.width(); x += 4) if (qGray(f.pixel(x, y)) > 30) lit++;
+                for (int k = 0; k < 4 && lit < 100; k++) {
+                    QEventLoop l; QTimer::singleShot(250, &l, &QEventLoop::quit); l.exec();
+                    f = v->video()->grabFramebuffer();
+                    lit = 0;
+                    for (int y = 0; y < f.height(); y += 4) for (int x = 0; x < f.width(); x += 4) if (qGray(f.pixel(x, y)) > 30) lit++;
+                }
                 printf("video: %s  %s  lit_px=%ld\n", v->timeText().toLocal8Bit().constData(), v->infoText().toLocal8Bit().constData(), lit);
                 f.save(shot + ".video.png");
                 if (v->video()->position <= 0 || lit < 100) rc = 7;
