@@ -72,7 +72,16 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - Toolbar "view_mode" button (dropdown + click cycles): Details / Icons / Thumbnails / Cascade.
   Dolphin part actions used: "details", "icons", "show_preview" (names printed by --selftest to verify).
 
+## NEXT (user request): GPU-only rendering
+- f3d: EGL then GLX only, no OSMesa/auto fallback; warn if GL_RENDERER is llvmpipe/softpipe/swrast.
+- mpv: hwdec=auto (GPU decode), render API already GPU.
+- ImageView -> QOpenGLWidget: lazy per-tile textures of the needed mip level, LRU VRAM budget,
+  shader quads with view matrix, checkerboard in shader, nearest/linear per smooth setting.
+- Qt widgets stay raster (compositor puts them on GPU); QtQuick rewrite not planned.
+
 ## IN PROGRESS (user request): video player + double-open fix + 3D low-res off
+- Video black inside full app (standalone OK): mpv log "after creating texture: OpenGL error INVALID_ENUM",
+  "render() not being called or stuck". Suspect libf3d exporting GL symbols; CI step prints them.
 - Double open: onOpenUrlRequest connected to openUrlRequest AND openUrlRequestDelayed -> dedupe same URL <1.5 s.
 - Video: src/videoview.* = libmpv (dlopen libmpv.so.2 at runtime, headers from libmpv-dev at build) with
   render API into QOpenGLWidget + controls bar. Missing libmpv -> default app. Videos+audio join files_ list.
