@@ -72,6 +72,11 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - Toolbar "view_mode" button (dropdown + click cycles): Details / Icons / Thumbnails / Cascade.
   Dolphin part actions used: "details", "icons", "show_preview" (names printed by --selftest to verify).
 
+## 3D speed (user: offscreen felt slower)
+- Mouse moves coalesced (one triggerMousePosition per frame), half-res renders while dragging/scrolling,
+  EGL -> GLX -> auto backend; status bar shows backend (OSMesa = software = slow). Needs user feedback.
+  Fallback idea if still slow: QOpenGLWindow (default FBO, real double buffering) + createExternal.
+
 ## 3D ghosting v2 (user still saw ghosting/stale frames with the FBO-clear fix)
 - ModelView is now a plain QWidget: f3d::engine::create(true) renders offscreen in its own GL context,
   frames read back via window.renderToImage() (bottom-up -> flipped), coalesced per event-loop pass.
