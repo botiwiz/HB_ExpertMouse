@@ -58,6 +58,12 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
   (HBV_HAVE_F3D); CI downloads f3d v4.0.1 release, build-appimage.sh bundles libf3d + NEEDED closure.
 - f3d source for reference: git clone --depth 1 https://github.com/f3d-app/f3d (tag v4.0.1).
 
+## IN PROGRESS: Cascade (Miller column) explorer view
+- src/columnbrowser.*: QColumnView + KDirModel + KDirSortFilterProxyModel + KFilePreviewGenerator,
+  preview column (our decoder for images incl. huge PSD, KIO::PreviewJob for other types) + file info.
+- Toggle vs Dolphin view (command "cascade", Ctrl+4); shares Places + KUrlNavigator; same activation rules
+  (images/3D -> viewer, other files -> default app); own copy/cut/paste/rename/trash/hidden keys.
+
 ## Ideas / TODO
 - Browser: preview pane, back/forward history, f3d thumbnails for 3D files (f3d --output), drag files out.
 - Re-decode the visible region at full resolution when zooming into a downscaled huge PSD.
