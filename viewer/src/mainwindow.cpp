@@ -1100,7 +1100,8 @@ void MainWindow::updateStatus() {
         QString info = video_->infoText();
         l += (info.isEmpty() ? QString() : "   " + info) + "   " + humanSize((double)QFileInfo(want_).size());
         statusL_->setText(l);
-        statusR_->setText(video_->timeText() + "   Space: pause  ←/→: seek  wheel: volume");
+        statusR_->setText((video_->video()->softwareGL ? QStringLiteral("⚠ software OpenGL (no GPU driver)   ") : QString()) +
+                          video_->timeText() + "   Space: pause  ←/→: seek  wheel: volume");
         return;
     }
 #endif
@@ -1129,8 +1130,9 @@ void MainWindow::updateStatus() {
         l += "   " + humanSize((double)QFileInfo(want_).size());
         if (loadSecs_ > 0) l += QString("   %1 s").arg(loadSecs_, 0, 'f', 2);
     }
+    if (view_->softwareGL) r = QStringLiteral("⚠ software OpenGL (no GPU driver)   ");
     if (view_->image()) {
-        r = view_->pixelText();
+        r += view_->pixelText();
         r += QString("%1%2%").arg(r.isEmpty() ? "" : "   ").arg(view_->zoomPercent(), 0, 'f', 1);
         if (slideshow_->isActive()) r = "Slideshow   " + r;
     }

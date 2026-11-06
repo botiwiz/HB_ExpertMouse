@@ -2,13 +2,19 @@
 // tiled (seamless) mode, pixel readout and animation playback.
 #pragma once
 #include "decode.h"
+#include <QOpenGLFunctions>
+#include <QOpenGLWidget>
 #include <QPointer>
-#include <QWidget>
 #include <memory>
+#include <unordered_map>
 
 class QMovie;
+class QOpenGLShaderProgram;
 
-class ImageView : public QWidget {
+// Drawn on the GPU: visible tiles of the needed mip level are uploaded as textures (LRU cache
+// with a VRAM budget) and drawn by a small shader; transforms, filtering and the transparency
+// checkerboard all happen on the GPU.
+class ImageView : public QOpenGLWidget, protected QOpenGLFunctions {
     Q_OBJECT
 public:
     enum Bg { BgDark, BgGray, BgWhite, BgChecker, BgCount };
@@ -50,7 +56,8 @@ signals:
     void doubleClicked();
 
 protected:
-    void paintEvent(QPaintEvent*) override;
+    void initializeGL() override;
+    void paintGL() override;
     void resizeEvent(QResizeEvent*) override;
     void mousePressEvent(QMouseEvent*) override;
     void mouseReleaseEvent(QMouseEvent*) override;
@@ -60,7 +67,10 @@ protected:
 
 private:
     QTransform viewTransform() const;              // level-0 image px -> widget px
-    void drawImageOnce(QPainter& p, double dx, double dy);
+    void drawImageOnce(double dx, double dy);
+    unsigned textureFor(int level, int c, int r);   // GL texture of a tile, uploaded on demand
+    void dropTextures();
+    void drawQuad(const QTransform& toScreen, double w, double h, int mode);   // mode 0 tile, 1 checker
     void setZoom(double z, QPointF at);
     void updatePixel(QPointF pos);
     void rotatedSize(double& w, double& h) const;
@@ -75,4 +85,15 @@ private:
     QPointF dragPos_;
     QString pixel_;
     QMovie* movie_ = nullptr;
+
+    // GPU resources
+    QOpenGLShaderProgram* prog_ = nullptr;
+    struct Tex { unsigned id; size_t bytes; quint64 used; };
+    std::unordered_map<quint64, Tex> tex_;          // key: level/col/row
+    const Image* texOwner_ = nullptr;               // image the cached textures belong to
+    size_t texBytes_ = 0, texBudget_ = size_t(768) << 20;
+    quint64 frameNo_ = 0;
+public:
+    QString glRenderer;                             // GL_RENDERER (status bar: software warning)
+    bool softwareGL = false;
 };

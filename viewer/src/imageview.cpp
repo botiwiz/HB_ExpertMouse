@@ -1,30 +1,25 @@
 #include "imageview.h"
 #include <QMouseEvent>
 #include <QMovie>
+#include <QOpenGLShaderProgram>
 #include <QPainter>
 #include <QWheelEvent>
 #include <algorithm>
 #include <cmath>
 
-static const QBrush& checkerBrush() {
-    static QBrush b = [] {
-        QImage c(16, 16, QImage::Format_RGB32);
-        c.fill(QColor(204, 204, 204));
-        QPainter p(&c);
-        p.fillRect(0, 0, 8, 8, QColor(153, 153, 153));
-        p.fillRect(8, 8, 8, 8, QColor(153, 153, 153));
-        return QBrush(c);
-    }();
-    return b;
-}
 
-ImageView::ImageView(QWidget* parent) : QWidget(parent) {
+ImageView::ImageView(QWidget* parent) : QOpenGLWidget(parent) {
     setMouseTracking(true);
     setFocusPolicy(Qt::StrongFocus);
-    setAttribute(Qt::WA_OpaquePaintEvent);
 }
 
-ImageView::~ImageView() = default;
+ImageView::~ImageView() {
+    if (!context()) return;
+    makeCurrent();
+    dropTextures();
+    delete prog_;
+    doneCurrent();
+}
 
 void ImageView::clear() {
     if (movie_) { movie_->deleteLater(); movie_ = nullptr; }
@@ -148,8 +143,89 @@ QImage ImageView::transformedImage() const {
     return q;
 }
 
-// ---------------------------------------------------------------- painting
-void ImageView::drawImageOnce(QPainter& p, double dx, double dy) {
+// ---------------------------------------------------------------- painting (GPU)
+static const char* kVert = R"(
+attribute vec2 pos;          // unit quad 0..1
+uniform mat4 mvp;
+uniform vec2 size;           // quad size in its own pixels
+varying vec2 uv;
+void main() { uv = pos; gl_Position = mvp * vec4(pos * size, 0.0, 1.0); }
+)";
+static const char* kFrag = R"(
+#ifdef GL_ES
+precision mediump float;
+#endif
+varying vec2 uv;
+uniform sampler2D tex;
+uniform int mode;            // 0 = tile (premultiplied BGRA bytes), 1 = checkerboard
+uniform float dpr;
+void main() {
+    if (mode == 1) {
+        vec2 c = floor(gl_FragCoord.xy / (8.0 * dpr));
+        float k = mod(c.x + c.y, 2.0);
+        gl_FragColor = vec4(vec3(mix(0.8, 0.6, k)), 1.0);
+    } else {
+        gl_FragColor = texture2D(tex, uv).bgra;   // tiles are stored as B,G,R,A bytes
+    }
+}
+)";
+
+void ImageView::initializeGL() {
+    initializeOpenGLFunctions();
+    prog_ = new QOpenGLShaderProgram;
+    prog_->addShaderFromSourceCode(QOpenGLShader::Vertex, kVert);
+    prog_->addShaderFromSourceCode(QOpenGLShader::Fragment, kFrag);
+    prog_->bindAttributeLocation("pos", 0);
+    prog_->link();
+    glRenderer = QString::fromLatin1(reinterpret_cast<const char*>(glGetString(GL_RENDERER)));
+    softwareGL = glRenderer.contains("llvmpipe", Qt::CaseInsensitive) || glRenderer.contains("softpipe", Qt::CaseInsensitive) ||
+                 glRenderer.contains("swrast", Qt::CaseInsensitive);
+}
+
+void ImageView::dropTextures() {
+    for (auto& t : tex_) glDeleteTextures(1, &t.second.id);
+    tex_.clear();
+    texBytes_ = 0;
+}
+
+unsigned ImageView::textureFor(int level, int c, int r) {
+    quint64 key = (quint64(level) << 48) | (quint64(c) << 24) | quint64(r);
+    auto it = tex_.find(key);
+    if (it != tex_.end()) { it->second.used = frameNo_; return it->second.id; }
+    Tile* t = image()->lv[level].tile(c, r);
+    size_t bytes = size_t(t->w) * t->h * 4;
+    // evict least recently used tiles (never ones drawn in this frame) to stay in the VRAM budget
+    while (texBytes_ + bytes > texBudget_ && !tex_.empty()) {
+        auto old = tex_.begin();
+        for (auto i = tex_.begin(); i != tex_.end(); ++i) if (i->second.used < old->second.used) old = i;
+        if (old->second.used == frameNo_) break;
+        glDeleteTextures(1, &old->second.id);
+        texBytes_ -= old->second.bytes;
+        tex_.erase(old);
+    }
+    GLuint id = 0;
+    glGenTextures(1, &id);
+    glBindTexture(GL_TEXTURE_2D, id);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+    // upload the B,G,R,A bytes as-is (RGBA texture); the shader swizzles - works on GL and GLES
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, t->w, t->h, 0, GL_RGBA, GL_UNSIGNED_BYTE, t->data);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    tex_[key] = {id, bytes, frameNo_};
+    texBytes_ += bytes;
+    return id;
+}
+
+void ImageView::drawQuad(const QTransform& toScreen, double w, double h, int mode) {
+    QMatrix4x4 proj;
+    proj.ortho(0, width(), height(), 0, -1, 1);                // widget px, y down
+    prog_->setUniformValue("mvp", proj * QMatrix4x4(toScreen));
+    prog_->setUniformValue("size", QVector2D(w, h));
+    prog_->setUniformValue("mode", mode);
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+}
+
+void ImageView::drawImageOnce(double dx, double dy) {
     Image* im = image();
     QTransform m = QTransform::fromTranslate(dx, dy) * viewTransform();
     // coarsest mip level that still has at least screen resolution
@@ -166,32 +242,48 @@ void ImageView::drawImageOnce(QPainter& p, double dx, double dy) {
     int r0 = std::max(0, (int)std::floor(vis.top() / Image::T)), r1 = std::min(l.rows - 1, (int)std::floor(vis.bottom() / Image::T));
     if (c0 > c1 || r0 > r1) return;
 
-    if (im->has_alpha) {                                         // checkerboard behind transparency
-        p.setTransform(QTransform());
-        p.setPen(Qt::NoPen);
-        p.setBrush(checkerBrush());
-        p.drawPolygon(lm.map(QRectF(0, 0, l.w, l.h)));
-    }
+    if (im->has_alpha) drawQuad(lm, l.w, l.h, 1);              // checkerboard behind transparency
     double scr = zoom_ * fx;                                     // screen px per level px
-    p.setRenderHint(QPainter::SmoothPixmapTransform, scr < 1.0 || smooth);
+    GLint filter = (scr < 1.0 || smooth) ? GL_LINEAR : GL_NEAREST;
     for (int r = r0; r <= r1; r++)
         for (int c = c0; c <= c1; c++) {
             Tile* t = l.tile(c, r);
-            QImage q(t->data, t->w, t->h, t->stride, QImage::Format_ARGB32_Premultiplied);
-            p.setTransform(QTransform::fromTranslate(c * Image::T, r * Image::T) * lm);
-            p.drawImage(QPointF(0, 0), q);
+            glBindTexture(GL_TEXTURE_2D, textureFor(L, c, r));
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+            drawQuad(QTransform::fromTranslate(c * Image::T, r * Image::T) * lm, t->w, t->h, 0);
         }
 }
 
-void ImageView::paintEvent(QPaintEvent*) {
-    QPainter p(this);
-    switch (bg) {
-    case BgDark: p.fillRect(rect(), QColor(28, 28, 31)); break;
-    case BgGray: p.fillRect(rect(), QColor(128, 128, 128)); break;
-    case BgWhite: p.fillRect(rect(), Qt::white); break;
-    default: p.fillRect(rect(), checkerBrush());
+void ImageView::paintGL() {
+    ++frameNo_;
+    QColor bgc = bg == BgGray ? QColor(128, 128, 128) : bg == BgWhite ? QColor(Qt::white) : QColor(28, 28, 31);
+    glClearColor(bgc.redF(), bgc.greenF(), bgc.blueF(), 1);
+    glClear(GL_COLOR_BUFFER_BIT);
+    if (image() != texOwner_) { dropTextures(); texOwner_ = image(); }   // new image / animation frame
+
+    static const GLfloat quad[] = {0, 0, 1, 0, 0, 1, 1, 1};
+    prog_->bind();
+    prog_->enableAttributeArray(0);
+    prog_->setAttributeArray(0, GL_FLOAT, quad, 2);
+    prog_->setUniformValue("tex", 0);
+    prog_->setUniformValue("dpr", float(devicePixelRatioF()));
+    glActiveTexture(GL_TEXTURE0);
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);                // premultiplied alpha
+    if (bg == BgChecker) drawQuad(QTransform(), width(), height(), 1);
+    if (Image* im = image()) {
+        if (tiled) {
+            for (int dy = -1; dy <= 1; dy++)
+                for (int dx = -1; dx <= 1; dx++) drawImageOnce(dx * im->width(), dy * im->height());
+        } else drawImageOnce(0, 0);
     }
-    if (!image()) {
+    prog_->disableAttributeArray(0);
+    prog_->release();
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    if (!image()) {                                              // message text (QPainter, also GPU-backed here)
+        QPainter p(this);
         QString msg = message_;
         if (msg.isEmpty() && r_ && !r_->error.empty()) msg = "Cannot open this file:\n" + QString::fromStdString(r_->error);
         if (msg.isEmpty()) msg = "Open an image with Ctrl+O, or drop a file here.\nRight-click anywhere for all commands.";
@@ -199,13 +291,7 @@ void ImageView::paintEvent(QPaintEvent*) {
         p.setPen(light ? QColor(50, 50, 50) : QColor(190, 190, 195));
         QFont f = font(); f.setPointSizeF(f.pointSizeF() * 1.2); p.setFont(f);
         p.drawText(rect(), Qt::AlignCenter, msg);
-        return;
     }
-    Image* im = image();
-    if (tiled) {
-        for (int dy = -1; dy <= 1; dy++)
-            for (int dx = -1; dx <= 1; dx++) drawImageOnce(p, dx * im->width(), dy * im->height());
-    } else drawImageOnce(p, 0, 0);
 }
 
 void ImageView::resizeEvent(QResizeEvent*) { if (autoFit_ && image()) fit(zoom_ > 1.0001); }

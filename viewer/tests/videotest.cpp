@@ -51,6 +51,8 @@ int main(int argc, char** argv) {
     QImage f = v.video()->grabFramebuffer();
     long lit = 0;
     for (int y = 0; y < f.height(); y += 4) for (int x = 0; x < f.width(); x += 4) if (qGray(f.pixel(x, y)) > 30) lit++;
+    printf("updates=%d paints=%d renders=%d visible=%d size=%dx%d\n", v.video()->updatesRequested, v.video()->paints,
+           v.video()->renders, v.video()->isVisible(), v.video()->width(), v.video()->height());
     printf("time: %s\ninfo: %s\nframe %dx%d lit_px=%ld\n", v.timeText().toLocal8Bit().constData(),
            v.infoText().toLocal8Bit().constData(), f.width(), f.height(), lit);
     f.save(argv[2]);

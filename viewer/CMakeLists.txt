@@ -25,8 +25,9 @@ if(HBV_CLI_ONLY)
   # offscreen render test of the image view (Qt Widgets only)
   find_package(Qt6 COMPONENTS Widgets)
   if(Qt6Widgets_FOUND)
+    find_package(Qt6 COMPONENTS OpenGLWidgets)
     add_executable(hb_viewtest tests/viewtest.cpp src/imageview.cpp)
-    target_link_libraries(hb_viewtest hbcore Qt6::Widgets)
+    target_link_libraries(hb_viewtest hbcore Qt6::Widgets Qt6::OpenGLWidgets)
   endif()
   find_path(MPV_INCLUDE_DIR mpv/render_gl.h)
   find_package(Qt6 COMPONENTS OpenGLWidgets)
@@ -40,11 +41,11 @@ endif()
 
 find_package(ECM REQUIRED NO_MODULE)
 list(APPEND CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGLWidgets)
 find_package(KF6 REQUIRED COMPONENTS CoreAddons Parts KIO XmlGui ColorScheme ConfigWidgets)
 
 add_executable(hb_viewer src/main.cpp src/mainwindow.cpp src/imageview.cpp src/columnbrowser.cpp src/previewpane.cpp)
-target_link_libraries(hb_viewer hbcore Qt6::Widgets
+target_link_libraries(hb_viewer hbcore Qt6::Widgets Qt6::OpenGLWidgets
   KF6::CoreAddons KF6::Parts KF6::KIOCore KF6::KIOGui KF6::KIOWidgets KF6::KIOFileWidgets
   KF6::XmlGui KF6::ColorScheme KF6::ConfigWidgets)
 # Embedded 3D viewer: libf3d (prebuilt SDK from https://github.com/f3d-app/f3d/releases,

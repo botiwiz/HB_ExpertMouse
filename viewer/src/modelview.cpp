@@ -68,15 +68,15 @@ bool ModelView::ensureEngine() {
         for (const char* p : {"assimp", "occt", "alembic", "draco", "usd", "hdf", "vdb"}) {
             try { f3d::engine::loadPlugin(p, dirs); } catch (...) {}
         }
-        // offscreen, own GL context: prefer GPU EGL (no window needed, fine on Wayland), then GLX
+        // offscreen, own GL context, GPU only: EGL (no window needed, fine on Wayland), then GLX.
+        // No OSMesa/automatic fallback: 3D is never rendered on the CPU.
         std::string errs;
-        for (int k = 0; k < 3 && !engine_; k++) {
+        for (int k = 0; k < 2 && !engine_; k++) {
             try {
-                engine_ = std::make_unique<f3d::engine>(k == 0 ? f3d::engine::createEGL()
-                                                       : k == 1 ? f3d::engine::createGLX(true) : f3d::engine::create(true));
+                engine_ = std::make_unique<f3d::engine>(k == 0 ? f3d::engine::createEGL() : f3d::engine::createGLX(true));
             } catch (const std::exception& e) { errs += std::string(e.what()) + "; "; }
         }
-        if (!engine_) throw std::runtime_error(errs);
+        if (!engine_) throw std::runtime_error("no GPU OpenGL (EGL/GLX) available for 3D: " + errs);
         inter_ = &engine_->getInteractor();
     } catch (const std::exception& e) {
         error_ = QString("Could not start f3d: ") + e.what();

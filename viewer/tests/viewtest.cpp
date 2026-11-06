@@ -5,7 +5,7 @@
 #include <cstring>
 
 int main(int argc, char** argv) {
-    qputenv("QT_QPA_PLATFORM", "offscreen");
+    if (qgetenv("DISPLAY").isEmpty()) qputenv("QT_QPA_PLATFORM", "offscreen");
     QApplication app(argc, argv);
     if (argc < 3) return 2;
     LoadCtl ctl;

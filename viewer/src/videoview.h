@@ -25,6 +25,9 @@ public:
     QString propString(const char* name) const;
 
     double position = 0, duration = 0, volume = 100;
+    int updatesRequested = 0, paints = 0, renders = 0;   // diagnostics
+    bool softwareGL = false;              // no GPU: llvmpipe / softpipe / swrast
+    QString renderer;                     // GL_RENDERER
     bool paused = false, muted = false;
 
 signals:

@@ -8,7 +8,9 @@
 #include <QLabel>
 #include <QLibrary>
 #include <QMouseEvent>
+#include <QGuiApplication>
 #include <QOpenGLContext>
+#include <QOpenGLFunctions>
 #include <QSlider>
 #include <QStyle>
 #include <QTimer>
@@ -101,7 +103,11 @@ MpvWidget::MpvWidget(QWidget* parent) : QOpenGLWidget(parent) {
     mpv_ = m.create();
     if (!mpv_) { error_ = "mpv_create failed"; return; }
     m.set_option_string(mpv_, "vo", "libmpv");
-    m.set_option_string(mpv_, "hwdec", "auto-safe");
+    QByteArray hw = qgetenv("HBV_HWDEC");                     // diagnostics override
+    m.set_option_string(mpv_, "hwdec", hw.isEmpty() ? "auto" : hw.constData());   // GPU decoding first
+    // diagnostics: extra options, e.g. HBV_MPV_OPTS="gpu-dumb-mode=yes,fbo-format=rgba8"
+    for (const QByteArray& kv : qgetenv("HBV_MPV_OPTS").split(','))
+        if (int eq = kv.indexOf('='); eq > 0) m.set_option_string(mpv_, kv.left(eq).constData(), kv.mid(eq + 1).constData());
     m.set_option_string(mpv_, "keep-open", "yes");    // stay on the last frame at the end
     m.set_option_string(mpv_, "idle", "yes");
     if (qEnvironmentVariableIsSet("HBV_MPV_LOG")) {          // diagnostics: mpv's own log on stderr
@@ -137,23 +143,41 @@ MpvWidget::~MpvWidget() {
 void MpvWidget::initializeGL() {
     if (!mpv_) return;
     mpv_opengl_init_params gl{glProc, nullptr};
-    mpv_render_param params[] = {
+    std::vector<mpv_render_param> params = {
         {MPV_RENDER_PARAM_API_TYPE, const_cast<char*>(MPV_RENDER_API_TYPE_OPENGL)},
-        {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl},
-        {MPV_RENDER_PARAM_INVALID, nullptr}};
-    if (int err = api().render_create(&rctx_, mpv_, params); err < 0) {
+        {MPV_RENDER_PARAM_OPENGL_INIT_PARAMS, &gl}};
+    // the display connection lets GPU-decoded frames (VA-API...) go straight to the screen
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    if (auto* x = qApp->nativeInterface<QNativeInterface::QX11Application>())
+        params.push_back({MPV_RENDER_PARAM_X11_DISPLAY, x->display()});
+    if (auto* w = qApp->nativeInterface<QNativeInterface::QWaylandApplication>())
+        params.push_back({MPV_RENDER_PARAM_WL_DISPLAY, w->display()});
+#endif
+    params.push_back({MPV_RENDER_PARAM_INVALID, nullptr});
+    // software OpenGL (llvmpipe/softpipe/swrast, i.e. no GPU driver): mpv's float FBOs render
+    // unreliably there, so use 8-bit ones, and tell the user
+    if (auto* f = context()->functions()) {
+        QString r = QString::fromLatin1(reinterpret_cast<const char*>(f->glGetString(GL_RENDERER)));
+        softwareGL = r.contains("llvmpipe", Qt::CaseInsensitive) || r.contains("softpipe", Qt::CaseInsensitive) ||
+                     r.contains("swrast", Qt::CaseInsensitive);
+        renderer = r;
+        if (softwareGL) api().set_property_string(mpv_, "fbo-format", "rgba8");
+    }
+    if (int err = api().render_create(&rctx_, mpv_, params.data()); err < 0) {
         error_ = QString("mpv render context: ") + api().error_string(err);
         rctx_ = nullptr;
         return;
     }
     api().render_set_update_callback(rctx_, [](void* ctx) {
         auto* self = static_cast<MpvWidget*>(ctx);
-        QMetaObject::invokeMethod(self, [self] { self->update(); }, Qt::QueuedConnection);
+        QMetaObject::invokeMethod(self, [self] { self->updatesRequested++; self->update(); }, Qt::QueuedConnection);
     }, this);
 }
 
 void MpvWidget::paintGL() {
+    paints++;
     if (!rctx_) return;
+    renders++;
     qreal dpr = devicePixelRatioF();
     mpv_opengl_fbo fbo{(int)defaultFramebufferObject(), int(width() * dpr), int(height() * dpr), 0};
     int flip = 1;
