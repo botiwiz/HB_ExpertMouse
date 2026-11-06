@@ -27,6 +27,7 @@ public:
     QImage frame() const { return frame_; }   // last complete frame (self-test)
     static QString f3dVersion();
     QString backend() const;                 // EGL / GLX / OSMesa (software)
+    bool lowResInteraction = false;          // half-res renders while dragging (softer, faster)
 
 signals:
     void contextMenuRequested(QPoint globalPos);

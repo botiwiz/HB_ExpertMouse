@@ -31,6 +31,11 @@ static const std::set<std::string> k3d = {"obj","stl","ply","gltf","glb","fbx","
 bool is_3d_ext(const std::string& e) { return k3d.count(e) > 0; }
 bool is_raw_ext(const std::string& e) { return kRaw.count(e) > 0; }
 
+static const std::set<std::string> kVideo = {"mp4","m4v","mkv","webm","avi","mov","qt","wmv","flv","mpg","mpeg","m2v","ts","m2ts","mts",
+    "3gp","3g2","ogv","vob","divx","asf","rm","rmvb","f4v","mxf","y4m",
+    "mp3","flac","wav","ogg","oga","opus","m4a","aac","wma","alac","ape","aiff","aif","mka","ac3","dts"};
+bool is_video_ext(const std::string& e) { return kVideo.count(e) > 0; }
+
 bool is_image_ext(const std::string& e) {
     static std::set<std::string> exts = [] {
         std::set<std::string> s = {"psd", "psb"};

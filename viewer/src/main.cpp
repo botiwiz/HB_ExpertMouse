@@ -6,6 +6,9 @@
 #ifdef HBV_HAVE_F3D
 #include "modelview.h"
 #endif
+#ifdef HBV_HAVE_MPV
+#include "videoview.h"
+#endif
 #include <KColorSchemeManager>
 #include <kcolorscheme_version.h>
 #include <QAbstractItemModel>
@@ -133,6 +136,18 @@ int main(int argc, char** argv) {
             }
 #else
             printf("f3d: NOT BUILT\n");
+#endif
+#ifdef HBV_HAVE_MPV
+            if (VideoView* v = w->videoView(); v && !v->path().isEmpty()) {
+                QImage f = v->video()->grabFramebuffer();
+                long lit = 0;
+                for (int y = 0; y < f.height(); y += 4) for (int x = 0; x < f.width(); x += 4) if (qGray(f.pixel(x, y)) > 30) lit++;
+                printf("video: %s  %s  lit_px=%ld\n", v->timeText().toLocal8Bit().constData(), v->infoText().toLocal8Bit().constData(), lit);
+                f.save(shot + ".video.png");
+                if (v->video()->position <= 0 || lit < 100) rc = 7;
+            }
+#else
+            printf("video: NOT BUILT\n");
 #endif
             w->grab().save(shot);
             fflush(stdout);

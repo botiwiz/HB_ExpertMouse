@@ -97,7 +97,7 @@ bool ModelView::ensureEngine() {
     return true;
 }
 
-double ModelView::renderScale() const { return devicePixelRatioF() * (interacting_ ? 0.5 : 1.0); }
+double ModelView::renderScale() const { return devicePixelRatioF() * (interacting_ && lowResInteraction ? 0.5 : 1.0); }
 
 void ModelView::syncSize() {
     if (!engine_) return;

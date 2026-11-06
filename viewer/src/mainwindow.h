@@ -15,6 +15,7 @@ class ImageView;
 class ColumnBrowser;
 class PreviewPane;
 class ModelView;
+class VideoView;
 class KUrlNavigator;
 class KFilePlacesView;
 class QLabel;
@@ -45,7 +46,8 @@ public:
     ColumnBrowser* cascade() const { return cascade_; }
     void setCascadeMode(bool on) { setCascade(on); }
     void selftestViewModes();                     // prints which Dolphin view actions exist
-    ModelView* modelView() const { return model_; }   // nullptr when built without f3d                    // browser folder from the previous session
+    ModelView* modelView() const { return model_; }   // nullptr when built without f3d
+    VideoView* videoView() const { return video_; }   // nullptr when built without mpv                    // browser folder from the previous session
 
 protected:
     void closeEvent(QCloseEvent*) override;
@@ -121,7 +123,8 @@ private:
     PreviewPane* sidePreview_ = nullptr;          // right-hand preview panel (browser)
     QString viewMode_ = "details";                // details | icons | thumbs | cascade
     QAction* viewModeAct_ = nullptr;
-    bool showingModel_ = false;
+    bool showingModel_ = false, showingVideo_ = false;
+    VideoView* video_ = nullptr;                  // embedded mpv player (HBV_HAVE_MPV)
     QToolBar* tb_ = nullptr;
     QLabel *statusL_ = nullptr, *statusR_ = nullptr;
     KUrlNavigator* nav_ = nullptr;

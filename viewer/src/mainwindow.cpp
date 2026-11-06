@@ -5,6 +5,9 @@
 #ifdef HBV_HAVE_F3D
 #include "modelview.h"
 #endif
+#ifdef HBV_HAVE_MPV
+#include "videoview.h"
+#endif
 
 #include <KActionCollection>
 #include <KFileItemActions>
@@ -31,6 +34,7 @@
 #include <QClipboard>
 #include <QCloseEvent>
 #include <QCollator>
+#include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
@@ -62,9 +66,16 @@
 
 static const QStringList kGroups = {"File", "Navigate", "Browser", "View", "Image", "3D", "Favorites", "Help", "Dolphin"};
 
+static bool canPlay(const std::string& e) {
+#ifdef HBV_HAVE_MPV
+    return is_video_ext(e) && VideoView::available();
+#else
+    (void)e; return false;
+#endif
+}
 static bool viewable(const QString& p) {
     std::string e = lower_ext(p.toStdString());
-    return is_image_ext(e) || is_3d_ext(e);
+    return is_image_ext(e) || is_3d_ext(e) || canPlay(e);
 }
 static QString humanSize(double b) {
     const char* u[] = {"B", "KB", "MB", "GB", "TB"}; int k = 0;
@@ -184,6 +195,15 @@ MainWindow::MainWindow() {
     stack_->addWidget(model_);
     connect(model_, &ModelView::contextMenuRequested, this, &MainWindow::showCommandMenu);
     connect(model_, &ModelView::loaded, this, [this](bool) { updateStatus(); });
+#endif
+#ifdef HBV_HAVE_MPV
+    if (VideoView::available()) {
+        video_ = new VideoView;
+        stack_->addWidget(video_);
+        connect(video_, &VideoView::statusChanged, this, &MainWindow::updateStatus);
+        connect(video_, &VideoView::contextMenuRequested, this, &MainWindow::showCommandMenu);
+        connect(video_, &VideoView::fullscreenRequested, this, &MainWindow::toggleFullscreen);
+    }
 #endif
 
     tb_ = addToolBar("Favorites");
@@ -472,6 +492,25 @@ void MainWindow::buildCommands() {
             else if (c.id == "back_browser") scoped({K(Qt::Key_Escape)});
             else if (c.id == "f3d") scoped({K(Qt::CTRL | Qt::Key_D)});
         }
+        addCmd("f3d_lowres", "Lower resolution while moving (faster, softer)", "3D", "speedometer", {}, [this] {
+            model_->lowResInteraction = !model_->lowResInteraction; }, nullptr, [this] { return model_->lowResInteraction; });
+    }
+#endif
+#ifdef HBV_HAVE_MPV
+    if (video_) {                                       // our keys inside the player; the rest are mpv-style
+        for (const Command& c : cmds_) {
+            auto scoped = [&](const QList<QKeySequence>& keys) {
+                auto* a = new QAction(this);
+                a->setShortcuts(keys);
+                a->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+                QAction* real = c.action;
+                connect(a, &QAction::triggered, real, &QAction::trigger);
+                video_->addAction(a);
+            };
+            if (c.id == "next") scoped({K(Qt::Key_PageDown)});
+            else if (c.id == "prev") scoped({K(Qt::Key_PageUp)});
+            else if (c.id == "back_browser") scoped({K(Qt::Key_Escape)});
+        }
     }
 #endif
     // single-key extras that only make sense in the viewer (Dolphin needs these keys for typing)
@@ -706,6 +745,9 @@ void MainWindow::loadSettings() {
     statusBar()->setVisible(s.value("window/statusbar", true).toBool());
     places_->setVisible(s.value("browser/places", true).toBool());
     sidePreview_->setVisible(s.value("browser/preview_panel", false).toBool());
+#ifdef HBV_HAVE_F3D
+    if (model_) model_->lowResInteraction = s.value("view/f3d_lowres", false).toBool();
+#endif
     if (!s.value("favorites/added_view_buttons", false).toBool()) {     // existing users get the new buttons once
         for (const char* id : {"preview_panel", "view_mode"})
             if (!favs_.contains(id)) favs_.insert(std::min<int>(1, favs_.size()), id);
@@ -731,6 +773,9 @@ void MainWindow::saveSettings() {
     s.setValue("browser/cascade", cascadeOn_);
     s.setValue("browser/view_mode", viewMode_);
     s.setValue("browser/preview_panel", sidePreview_->isVisible());
+#ifdef HBV_HAVE_F3D
+    if (model_) s.setValue("view/f3d_lowres", model_->lowResInteraction);
+#endif
     if (part_ && part_->url().isValid()) s.setValue("browser/folder", part_->url().toString());
 }
 
@@ -841,6 +886,13 @@ void MainWindow::clipboardPaste() {
 // Activation in Dolphin: folders navigate, pictures/3D open in our viewer,
 // everything else gets normal file-manager behaviour (default application).
 void MainWindow::onOpenUrlRequest(const QUrl& url, const KParts::OpenUrlArguments& args) {
+    // Dolphin can send the same activation as both openUrlRequest and openUrlRequestDelayed:
+    // act on it once (this is what opened videos/PDFs twice)
+    static QUrl lastUrl;
+    static qint64 lastMs = 0;
+    qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (url == lastUrl && now - lastMs < 1500) return;
+    lastUrl = url; lastMs = now;
     QString mime = args.mimeType();
     bool dir = mime == "inode/directory" || (url.isLocalFile() && QFileInfo(url.toLocalFile()).isDir());
     if (dir) { navigateTo(url); return; }
@@ -856,12 +908,16 @@ void MainWindow::onOpenUrlRequest(const QUrl& url, const KParts::OpenUrlArgument
 void MainWindow::setViewerMode(bool viewer) {
     viewer_ = viewer;
     if (viewer) {
-        QWidget* page = showingModel_ && model_ ? (QWidget*)model_ : (QWidget*)view_;
+        QWidget* page = showingVideo_ && video_ ? (QWidget*)video_ : showingModel_ && model_ ? (QWidget*)model_ : (QWidget*)view_;
         stack_->setCurrentWidget(page);
         page->setFocus();
     }
     else {
         slideshow_->stop();
+#ifdef HBV_HAVE_MPV
+        if (video_) video_->stop();                    // no sound left playing in the browser
+        showingVideo_ = false;
+#endif
         stack_->setCurrentWidget(browserPage_);
         if (cascadeActive()) cascade_->view()->setFocus();
         else if (part_) part_->widget()->setFocus();
@@ -904,6 +960,27 @@ void MainWindow::openInViewer(const QString& path) {
     else idx_ = files_.indexOf(path);
     want_ = path;
     for (auto& j : jobs_) if (j.first != path) j.second.ctl->cancel = true;     // drop stale work
+#ifdef HBV_HAVE_MPV
+    if (canPlay(lower_ext(path.toStdString())) && video_) {
+        view_->clear();
+        curPath_ = path;
+        showingVideo_ = true;
+        if (showingModel_) { showingModel_ = false;
+#ifdef HBV_HAVE_F3D
+            if (model_) model_->unload();
+#endif
+        }
+        if (viewer_) stack_->setCurrentWidget(video_);
+        video_->open(path);
+        updateTitle(); updateStatus();
+        return;
+    }
+    if (showingVideo_) {                                // leaving the player
+        showingVideo_ = false;
+        if (video_) video_->stop();
+        if (viewer_) { stack_->setCurrentWidget(view_); view_->setFocus(); }
+    }
+#endif
     if (is_3d_ext(lower_ext(path.toStdString()))) {
         view_->clear();
         curPath_ = path;
@@ -992,7 +1069,7 @@ void MainWindow::preloadNeighbours() {
     if (n < 2 || !view_->image() || view_->image()->bytes() > (400u << 20)) return;
     const QString& p = files_[(idx_ + 1) % n];
     QFileInfo fi(p);
-    if (is_3d_ext(lower_ext(p.toStdString())) || cache_.count(p) || jobs_.count(p) || fi.size() > (200 << 20)) return;
+    if (is_3d_ext(lower_ext(p.toStdString())) || canPlay(lower_ext(p.toStdString())) || cache_.count(p) || jobs_.count(p) || fi.size() > (200 << 20)) return;
     startJob(p);
 }
 
@@ -1018,6 +1095,15 @@ void MainWindow::updateStatus() {
         return;
     }
     if (!files_.isEmpty() && idx_ >= 0) l = QString("%1/%2   %3").arg(idx_ + 1).arg(files_.size()).arg(QFileInfo(want_).fileName());
+#ifdef HBV_HAVE_MPV
+    if (showingVideo_ && video_) {
+        QString info = video_->infoText();
+        l += (info.isEmpty() ? QString() : "   " + info) + "   " + humanSize((double)QFileInfo(want_).size());
+        statusL_->setText(l);
+        statusR_->setText(video_->timeText() + "   Space: pause  ←/→: seek  wheel: volume");
+        return;
+    }
+#endif
 #ifdef HBV_HAVE_F3D
     if (showingModel_ && model_) {
         if (!model_->error().isEmpty()) l += "   cannot open: " + model_->error().left(200);

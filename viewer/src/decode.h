@@ -34,3 +34,4 @@ std::string lower_ext(const std::string& path);
 bool is_image_ext(const std::string& ext);
 bool is_3d_ext(const std::string& ext);
 bool is_raw_ext(const std::string& ext);
+bool is_video_ext(const std::string& ext);   // video + audio files for the mpv player
