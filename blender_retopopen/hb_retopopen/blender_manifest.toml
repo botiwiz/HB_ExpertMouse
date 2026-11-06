@@ -1,0 +1,14 @@
+schema_version = "1.0.0"
+
+id = "hb_retopopen"
+version = "1.0.0"
+name = "HB_RetopoPen"
+tagline = "Draw patch outlines on the surface and get quad patches"
+maintainer = "Boti Harko"
+type = "add-on"
+
+tags = ["Mesh", "Modeling"]
+
+blender_version_min = "4.2.0"
+
+license = ["SPDX:GPL-2.0-or-later"]
