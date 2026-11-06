@@ -1,11 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Retopo Pen: click corner points on the surface, close the loop, get a quad patch."""
+"""Retopo Pen: draw an outline on the surface (corners, curves, freehand), close it, get a quad patch."""
 
+import blf
 import bmesh
 import bpy
 import gpu
 import numpy as np
-from bpy.props import CollectionProperty, EnumProperty, FloatVectorProperty, IntProperty
+from bpy.props import BoolProperty, CollectionProperty, EnumProperty, FloatProperty, FloatVectorProperty, IntProperty
 from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
@@ -14,18 +15,41 @@ from . import patch, surface
 
 RETOPO_NAME = "Retopo"
 LAYOUT_ITEMS = (('AUTO', "Auto", "4 corners: grid; otherwise one quad region per corner around a centre pole"),
-                ('POLE', "Centre Pole", "Always one quad region per corner around a centre pole"))
+                ('GRID', "Grid", "Grid (4 corners only, else centre pole)"),
+                ('POLE', "Centre Pole", "One quad region per corner around a centre pole"))
+DENSITY_ITEMS = (('SEGMENTS', "Segments", "Density as a number of segments along the longer sides"),
+                 ('LENGTH', "Edge Length", "Density as a target edge length"))
+CONFORM_ITEMS = (('SURFACE', "Surface", "Snap the patch onto the surfaces underneath"),
+                 ('NONE', "Flat", "Keep the patch where the outline puts it (no projection inside)"))
+
+
+def _patch_props():
+    return dict(
+        resolution=IntProperty(name="Resolution", default=8, min=1, max=200,
+                               description="Segments along the longer sides (mouse wheel)"),
+        density_mode=EnumProperty(name="Density", items=DENSITY_ITEMS, default='SEGMENTS'),
+        edge_length=FloatProperty(name="Edge Length", default=0.1, min=1e-5, subtype='DISTANCE', unit='LENGTH',
+                                  description="Target edge length (Density: Edge Length)"),
+        relax=IntProperty(name="Relax", default=3, min=0, max=100, description="Relax passes on the surface"),
+        side_smooth=IntProperty(name="Side Smoothing", default=0, min=0, max=100,
+                                description="Smooth the outline's sides (not border-following ones)"),
+        layout=EnumProperty(name="Layout", items=LAYOUT_ITEMS, default='AUTO'),
+        conform=EnumProperty(name="Conform", items=CONFORM_ITEMS, default='SURFACE'),
+        strength=FloatProperty(name="Strength", default=1.0, min=0.0, max=1.0, subtype='FACTOR',
+                               description="How strongly the patch snaps onto the surface"),
+        offset=FloatProperty(name="Offset", default=0.0, subtype='DISTANCE', unit='LENGTH',
+                             description="Float the patch above (or below) the surface"),
+    )
 
 
 def _settings_props():
-    return dict(
-        resolution=IntProperty(name="Resolution", default=8, min=1, max=200,
-                               description="Segments along the patch's longer sides (mouse wheel while drawing)"),
-        relax=IntProperty(name="Relax", default=3, min=0, max=50, description="Smoothing passes on the surface"),
-        layout=EnumProperty(name="Layout", items=LAYOUT_ITEMS, default='AUTO'),
-        snap_px=IntProperty(name="Snap Radius", default=14, min=2, max=100, subtype='PIXEL',
-                            description="Snap to existing retopo vertices and close the loop within this distance"),
-    )
+    d = _patch_props()
+    d["snap_px"] = IntProperty(name="Snap Radius", default=14, min=2, max=100, subtype='PIXEL',
+                               description="Snap to existing retopo vertices and close the loop within this distance")
+    return d
+
+
+PATCH_KEYS = tuple(_patch_props())
 
 
 class HBRetopoSettings(bpy.types.PropertyGroup):
@@ -34,7 +58,29 @@ class HBRetopoSettings(bpy.types.PropertyGroup):
 
 class HBRetopoPoint(bpy.types.PropertyGroup):
     co: FloatVectorProperty(size=3, subtype='XYZ')
+    side: IntProperty()
+    fixed: BoolProperty()
 
+
+def draw_patch_settings(layout, data):
+    col = layout.column()
+    row = col.row()
+    row.prop(data, "density_mode", expand=True)
+    col.prop(data, "resolution" if data.density_mode == 'SEGMENTS' else "edge_length")
+    col.prop(data, "layout")
+    col.separator()
+    col.prop(data, "relax")
+    col.prop(data, "side_smooth")
+    col.separator()
+    col.prop(data, "conform")
+    sub = col.column()
+    sub.active = data.conform == 'SURFACE'
+    sub.prop(data, "strength", slider=True)
+    sub.prop(data, "offset")
+
+
+# ----------------------------------------------------------------------------
+# Retopo object
 
 def retopo_object(context, create=True):
     """The mesh being built: the edit object, else an object named Retopo, else a new one."""
@@ -65,72 +111,130 @@ def ensure_edit(context, obj):
     bpy.ops.object.mode_set(mode='EDIT')
 
 
-def border_sides(obj, bm, corners, tol):
-    """Sides of the outline that run along an open border of the retopo mesh: both corners are
-    border vertices joined by a border path. Returns {side k: [world points corner k -> k+1]}."""
+# ----------------------------------------------------------------------------
+# Outline -> sides
+
+def border_path(obj, bm, a_co, b_co, tol):
+    """Points (world) of the open-border path between the border vertices at a_co and b_co, or None."""
     mw = obj.matrix_world
     border = [v for v in bm.verts if v.is_boundary]
     if not border:
-        return {}
+        return None
 
     def find(co):
         best = min(border, key=lambda v: ((mw @ v.co) - co).length)
         return best if ((mw @ best.co) - co).length <= tol else None
 
-    at = [find(Vector(c)) for c in corners]
-    n = len(corners)
-    out = {}
-    for k in range(n):
-        a, b = at[k], at[(k + 1) % n]
-        if a is None or b is None or a is b:
-            continue
-        # shortest path from a to b along border edges
-        prev, queue = {a: None}, [a]
-        for v in queue:
-            if v is b:
-                break
-            for e in v.link_edges:
-                if not e.is_boundary:
-                    continue
+    a, b = find(a_co), find(b_co)
+    if a is None or b is None or a is b:
+        return None
+    prev, queue = {a: None}, [a]
+    for v in queue:
+        if v is b:
+            break
+        for e in v.link_edges:
+            if e.is_boundary:
                 w = e.other_vert(v)
                 if w not in prev:
                     prev[w] = v
                     queue.append(w)
-        if b not in prev:
-            continue
-        path, v = [], b
-        while v is not None:
-            path.append(v)
-            v = prev[v]
-        path.reverse()
-        pts = [mw @ v.co for v in path]
-        chord = (pts[-1] - pts[0]).length
-        length = sum((pts[i + 1] - pts[i]).length for i in range(len(pts) - 1))
-        if len(pts) >= 2 and length <= 2.0 * chord + 1e-9:   # follows the border, not around the mesh
-            out[k] = pts
-    return out
+    if b not in prev:
+        return None
+    path, v = [], b
+    while v is not None:
+        path.append(mw @ v.co)
+        v = prev[v]
+    path.reverse()
+    chord = (path[-1] - path[0]).length
+    if patch.poly_length(path) > 2.0 * chord + 1e-9:   # goes around the mesh, not along this side
+        return None
+    return path
 
 
-def make_patch(context, obj, corners, s, existing=None):
-    """Build a patch into the edit mesh of obj. Returns the new faces."""
+def outline_sides(nodes, strokes, conform):
+    """Turn the outline into side polylines (corner -> next corner).
+    nodes: [(co, is_corner)], strokes: {segment i: [points]} (segment i = node i -> node i+1)."""
+    n = len(nodes)
+    corners = [i for i, (_c, corner) in enumerate(nodes) if corner]
+    if len(corners) < 3:
+        return None, []
+    sides = []
+    for ci, a in enumerate(corners):
+        b = corners[(ci + 1) % len(corners)]
+        idx = [a]
+        k = a
+        while k != b:
+            k = (k + 1) % n
+            idx.append(k)
+        poly = [nodes[a][0].copy()]
+        run = [a]          # nodes of the current non-freehand run (curve through them)
+
+        def flush(run):
+            pts = [nodes[i][0] for i in run]
+            if len(pts) >= 3:
+                curve = patch.catmull_rom(pts)
+                return [conform(p) for p in curve[1:-1]] + [pts[-1].copy()]
+            return [p.copy() for p in pts[1:]]
+
+        for s_from, s_to in zip(idx, idx[1:]):
+            if s_from in strokes:
+                poly += flush(run)
+                stroke = strokes[s_from]
+                poly += [p.copy() for p in stroke[1:-1]] + [nodes[s_to][0].copy()]
+                run = [s_to]
+            else:
+                run.append(s_to)
+        poly += flush(run)
+        # drop accidental duplicates
+        clean = [poly[0]]
+        for q in poly[1:]:
+            if (q - clean[-1]).length > 1e-9:
+                clean.append(q)
+        if len(clean) < 2:
+            clean.append(clean[0].copy())
+        sides.append(clean)
+    return sides, corners
+
+
+def sides_from_outline(context, obj, nodes, strokes, p):
+    """Side polylines + which ones follow an existing open border (exact vertices)."""
+    surf = surface.Surfaces(context, exclude=(obj,))
+    conform = patch.make_conform(surf, p)
+    sides, corners = outline_sides(nodes, strokes, conform)
+    if sides is None:
+        return None, None
+    bm = bmesh.from_edit_mesh(obj.data)
+    tol = 1e-3 * max(1.0, max(c.length for c, _k in nodes))
+    fixed = []
+    for k, side in enumerate(sides):
+        a, b = corners[k], corners[(k + 1) % len(corners)]
+        straight = len(side) == 2   # only plain sides follow a border (curved/freehand ones are drawn)
+        path = border_path(obj, bm, side[0], side[-1], tol) if straight else None
+        if path is not None:
+            sides[k] = path
+            fixed.append(True)
+        else:
+            fixed.append(False)
+    return sides, fixed
+
+
+def build_patch(context, obj, sides, fixed, p):
     bm = bmesh.from_edit_mesh(obj.data)
     surf = surface.Surfaces(context, exclude=(obj,))
-    existing = existing if existing is not None else [v for v in bm.verts if v.is_boundary]
-    mw_inv = obj.matrix_world.inverted_safe()
-    weld = 1e-4 * max(1.0, max(c.length for c in corners))
-    fixed = border_sides(obj, bm, corners, tol=weld * 10)
-    faces = patch.build(bm, surf, [Vector(c) for c in corners], s.resolution, s.relax, s.layout,
-                        weld_to=existing, weld_dist=weld, mw_inv=mw_inv, fixed=fixed)
+    existing = [v for v in bm.verts if v.is_boundary]
+    size = max(1.0, max(q.length for s in sides for q in s))
+    faces = patch.build(bm, sides, fixed, p, surf, mw_inv=obj.matrix_world.inverted_safe(),
+                        weld_to=existing, weld_dist=1e-4 * size)
     bm.normal_update()
     bmesh.update_edit_mesh(obj.data)
     return faces
 
 
 # ----------------------------------------------------------------------------
-# The registered operator (redo panel: change the density afterwards)
+# The registered operator (redo panel: all settings stay adjustable)
 
 class HB_RETOPO_OT_patch(bpy.types.Operator):
-    """Create a quad patch on the surface from a closed outline of corner points"""
+    """Create a quad patch on the surface from a closed outline"""
     bl_idname = "hb_retopo.patch"
     bl_label = "Retopo Patch"
     bl_options = {'REGISTER', 'UNDO'}
@@ -142,19 +246,22 @@ class HB_RETOPO_OT_patch(bpy.types.Operator):
         return context.mode in {'EDIT_MESH', 'OBJECT'}
 
     def draw(self, context):
-        layout = self.layout
-        layout.use_property_split = True
-        layout.prop(self, "resolution")
-        layout.prop(self, "relax")
-        layout.prop(self, "layout")
+        self.layout.use_property_split = True
+        draw_patch_settings(self.layout, self)
 
     def execute(self, context):
-        if len(self.points) < 3:
-            self.report({'WARNING'}, "Needs at least 3 corner points")
+        sides, fixed = {}, {}
+        for pt in self.points:
+            sides.setdefault(pt.side, []).append(Vector(pt.co))
+            fixed[pt.side] = pt.fixed
+        if len(sides) < 3:
+            self.report({'WARNING'}, "Needs an outline with at least 3 corners")
             return {'CANCELLED'}
+        order = sorted(sides)
         obj = retopo_object(context)
         ensure_edit(context, obj)
-        faces = make_patch(context, obj, [p.co for p in self.points], self)
+        faces = build_patch(context, obj, [sides[k] for k in order], [fixed[k] for k in order],
+                            patch.Params.from_props(self))
         bm = bmesh.from_edit_mesh(obj.data)
         for f in bm.faces:
             f.select_set(False)
@@ -163,62 +270,80 @@ class HB_RETOPO_OT_patch(bpy.types.Operator):
                 f.select_set(True)
         bmesh.update_edit_mesh(obj.data)
         st = context.scene.hb_retopo
-        for n in ("resolution", "relax", "layout"):
-            setattr(st, n, getattr(self, n))
+        for k in PATCH_KEYS:
+            setattr(st, k, getattr(self, k))
         return {'FINISHED'}
 
 
-HB_RETOPO_OT_patch.__annotations__.update(_settings_props())
+HB_RETOPO_OT_patch.__annotations__.update(_patch_props())
 
 
 # ----------------------------------------------------------------------------
-# The pen (modal)
+# Drawing
+
+COL_LINE = (1.0, 0.45, 0.75, 1.0)
+COL_CORNER = (1.0, 1.0, 1.0, 1.0)
+COL_CONTROL = (0.35, 0.85, 1.0, 1.0)
+
 
 def _draw_view(op):
     try:
-        pts = [tuple(p) for p in op.points]
-        if op.hover is not None and op.preview is None:
-            pts_line = pts + [tuple(op.hover)]
-        else:
-            pts_line = pts
-        shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
         region = bpy.context.region
         gpu.state.blend_set('ALPHA')
         gpu.state.depth_test_set('NONE')
-        if len(pts_line) >= 2:
-            seg = []
-            for a, b in zip(pts_line, pts_line[1:]):
-                seg += [a, b]
-            if op.preview is not None and len(pts) >= 3:
-                seg += [pts[-1], pts[0]]
-            batch = batch_for_shader(shader, 'LINES', {"pos": seg})
+        shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
+        lines = op.preview_lines()
+        if lines:
+            batch = batch_for_shader(shader, 'LINES', {"pos": lines})
             shader.bind()
             shader.uniform_float("viewportSize", (region.width, region.height))
             shader.uniform_float("lineWidth", 2.0)
-            shader.uniform_float("color", (1.0, 0.45, 0.75, 1.0))
+            shader.uniform_float("color", COL_LINE)
             batch.draw(shader)
-        if pts:
-            ps = gpu.shader.from_builtin('UNIFORM_COLOR')
-            gpu.state.point_size_set(9)
-            b = batch_for_shader(ps, 'POINTS', {"pos": pts})
-            ps.bind()
-            ps.uniform_float("color", (1.0, 1.0, 1.0, 1.0))
-            b.draw(ps)
-            if op.closing:
-                gpu.state.point_size_set(16)
-                b = batch_for_shader(ps, 'POINTS', {"pos": [pts[0]]})
-                ps.uniform_float("color", (0.4, 1.0, 0.5, 0.9))
+        ps = gpu.shader.from_builtin('UNIFORM_COLOR')
+        for pts, size, col in ((op.node_points(True), 9, COL_CORNER), (op.node_points(False), 7, COL_CONTROL)):
+            if pts:
+                gpu.state.point_size_set(size)
+                b = batch_for_shader(ps, 'POINTS', {"pos": pts})
+                ps.bind()
+                ps.uniform_float("color", col)
                 b.draw(ps)
-            gpu.state.point_size_set(1)
+        if op.closing and op.nodes:
+            gpu.state.point_size_set(16)
+            b = batch_for_shader(ps, 'POINTS', {"pos": [tuple(op.nodes[0][0])]})
+            ps.bind()
+            ps.uniform_float("color", (0.4, 1.0, 0.5, 0.9))
+            b.draw(ps)
+        gpu.state.point_size_set(1)
         gpu.state.blend_set('NONE')
     except ReferenceError:
         pass
 
 
+def _draw_hud(op):
+    try:
+        lines = op.hud_lines()
+        ui = bpy.context.preferences.system.ui_scale or 1.0
+        x, y = 20 * ui, bpy.context.region.height - 60 * ui
+        for text, bright in lines:
+            blf.size(0, 13 * ui)
+            blf.color(0, *((1, 1, 1, 0.95) if bright else (0.75, 0.75, 0.8, 0.85)))
+            blf.position(0, x, y, 0)
+            blf.draw(0, text)
+            y -= 18 * ui
+    except ReferenceError:
+        pass
+
+
+# ----------------------------------------------------------------------------
+# The pen (modal)
+
+DRAG_PX = 6
+
+
 class HB_RETOPO_OT_pen(bpy.types.Operator):
-    """Draw a patch outline on the surface: click corners (snaps to the surface and to existing
-retopo vertices), click the first point again (or Enter) to close it into a quad patch,
-mouse wheel sets the density, click / Enter to keep it"""
+    """Draw a patch outline on the surface. Click: corner, Shift+click: curve point, drag: freehand.
+Click the first point (or Enter) to close it into a quad patch, then tune it and click to keep it"""
     bl_idname = "hb_retopo.pen"
     bl_label = "Retopo Pen"
     bl_options = {'BLOCKING'}
@@ -227,12 +352,11 @@ mouse wheel sets the density, click / Enter to keep it"""
     def poll(cls, context):
         return context.area is not None and context.area.type == 'VIEW_3D' and context.mode in {'EDIT_MESH', 'OBJECT'}
 
-    # --- helpers ---------------------------------------------------------------
+    # --- picking ---------------------------------------------------------------
     def _mouse(self, event):
         return Vector((event.mouse_region_x, event.mouse_region_y))
 
     def _existing_snap(self, mouse):
-        """World position of the retopo vertex nearest the mouse within the snap radius."""
         if self.vert_cos is None or not len(self.vert_cos):
             return None
         m = np.array(self.rv3d.perspective_matrix)
@@ -243,69 +367,128 @@ mouse wheel sets the density, click / Enter to keep it"""
         w = np.where(ok, w, 1.0)
         x = (clip[:, 0] / w + 1) * 0.5 * self.region.width
         y = (clip[:, 1] / w + 1) * 0.5 * self.region.height
-        d = np.hypot(x - mouse.x, y - mouse.y)
-        d = np.where(ok, d, np.inf)
+        d = np.where(ok, np.hypot(x - mouse.x, y - mouse.y), np.inf)
         i = int(np.argmin(d))
         return Vector(pts[i]) if d[i] <= self.st.snap_px else None
 
     def _refresh_verts(self):
-        bm = bmesh.from_edit_mesh(self.obj.data)
+        self.bm = bm = bmesh.from_edit_mesh(self.obj.data)
         mw = np.array(self.obj.matrix_world)
         co = np.array([v.co for v in bm.verts]) if bm.verts else np.zeros((0, 3))
         self.vert_cos = co @ mw[:3, :3].T + mw[:3, 3] if len(co) else co
-        self.boundary = [v for v in bm.verts if v.is_boundary]
 
-    def _pick(self, mouse):
-        snap = self._existing_snap(mouse)
-        if snap is not None:
-            return snap
+    def _surface_hit(self, mouse):
         loc, _n = self.surf.mouse_hit(self.region, self.rv3d, mouse)
         return loc
 
+    def _pick(self, mouse):
+        snap = self._existing_snap(mouse)
+        return snap if snap is not None else self._surface_hit(mouse)
+
     def _near_first(self, mouse):
-        if len(self.points) < 3:
+        if len([1 for _c, k in self.nodes if k]) < 2 or len(self.nodes) < 3:
             return False
-        p = view3d_utils.location_3d_to_region_2d(self.region, self.rv3d, self.points[0])
+        p = view3d_utils.location_3d_to_region_2d(self.region, self.rv3d, self.nodes[0][0])
         return p is not None and (p - mouse).length <= self.st.snap_px
 
-    def _header(self, context):
-        if self.preview is None:
-            txt = ("Retopo Pen  %d points  |  click: add corner, click first point / Enter: close, "
-                   "Backspace: undo point, wheel: resolution (%d), Esc: done" % (len(self.points), self.st.resolution))
-        else:
-            txt = ("Retopo Pen  Resolution %d  |  wheel / +-: density, click / Enter: keep, "
-                   "Backspace: back to editing the outline, Esc: discard" % self.st.resolution)
-        context.area.header_text_set(txt)
+    # --- drawing data ---------------------------------------------------------------
+    def node_points(self, corners):
+        return [tuple(c) for c, k in self.nodes if k == corners]
 
+    def preview_lines(self):
+        if not self.nodes:
+            return []
+        pts = []
+        n = len(self.nodes)
+        conform = lambda q: q
+        if self.preview is None:
+            nodes = list(self.nodes)
+            strokes = dict(self.strokes)
+            if self.stroke:                       # freehand in progress
+                strokes[len(nodes) - 1] = self.stroke
+                nodes.append((self.stroke[-1], True))
+            elif self.hover is not None:
+                nodes.append((self.hover, not self.shift))
+            seq = nodes
+            for i in range(len(seq) - 1):
+                if i in strokes:
+                    path = strokes[i]
+                else:
+                    path = [seq[i][0], seq[i + 1][0]]
+                for a, b in zip(path, path[1:]):
+                    pts += [tuple(a), tuple(b)]
+            return pts
+        for side in self.sides or []:
+            for a, b in zip(side, side[1:]):
+                pts += [tuple(a), tuple(b)]
+        return pts
+
+    def hud_lines(self):
+        s = self.st
+        if self.preview is None:
+            return [("Retopo Pen  —  outline (%d points)" % len(self.nodes), True),
+                    ("Click: corner   Shift+Click: curve point   Drag: freehand", False),
+                    ("Click first point / Enter: close   Backspace: undo point   Esc: done", False),
+                    ("Wheel: density (%s)" % self._density_text(), False)]
+        dens = self._density_text()
+        return [("Retopo Pen  —  patch (%d faces)" % len(self.preview), True),
+                ("Density  %s      [Wheel / + -,  D: segments / edge length]" % dens, True),
+                ("Layout   %s      [L]" % dict((i[0], i[1]) for i in LAYOUT_ITEMS)[s.layout], True),
+                ("Relax    %d      [R / Shift+R]" % s.relax, True),
+                ("Side Smoothing  %d      [S / Shift+S]" % s.side_smooth, True),
+                ("Conform  %s      [C]" % dict((i[0], i[1]) for i in CONFORM_ITEMS)[s.conform], True),
+                ("Strength  %.2f      [G / Shift+G]" % s.strength, True),
+                ("Offset   %.4g      [F / Shift+F]" % s.offset, True),
+                ("Click / Enter: keep    Backspace: edit outline    Esc: discard", False)]
+
+    def _density_text(self):
+        s = self.st
+        return ("%d segments" % s.resolution) if s.density_mode == 'SEGMENTS' else ("edge %.4g" % s.edge_length)
+
+    # --- preview -----------------------------------------------------------------------
     def _clear_preview(self):
         if self.preview:
             bm = bmesh.from_edit_mesh(self.obj.data)
             verts = {v for f in self.preview if f.is_valid for v in f.verts}
-            # only remove vertices that were made for the preview (keep welded existing ones)
             new = [v for v in verts if v not in self.old_verts]
             bmesh.ops.delete(bm, geom=[f for f in self.preview if f.is_valid], context='FACES_ONLY')
             bmesh.ops.delete(bm, geom=[v for v in new if v.is_valid and not v.link_faces], context='VERTS')
-            loose = [e for e in bm.edges if not e.link_faces and e.verts[0] not in self.old_verts]
+            loose = [e for e in bm.edges if not e.link_faces and not (e.verts[0] in self.old_verts and e.verts[1] in self.old_verts)]
             if loose:
                 bmesh.ops.delete(bm, geom=loose, context='EDGES')
             bmesh.update_edit_mesh(self.obj.data)
         self.preview = None
 
-    def _make_preview(self, context):
+    def _close(self, context):
+        p = patch.Params.from_props(self.st)
+        self.sides, self.fixed = sides_from_outline(context, self.obj, self.nodes, self.strokes, p)
+        if self.sides is None:
+            self.report({'WARNING'}, "The outline needs at least 3 corners")
+            return
+        self._rebuild(context)
+
+    def _rebuild(self, context):
         self._clear_preview()
-        bm = bmesh.from_edit_mesh(self.obj.data)
+        # keep the BMesh wrapper alive: element references die with it
+        self.bm = bm = bmesh.from_edit_mesh(self.obj.data)
         self.old_verts = set(bm.verts)
-        self.preview = make_patch(context, self.obj, self.points, self.st, existing=self.boundary)
+        self.preview = build_patch(context, self.obj, self.sides, self.fixed, patch.Params.from_props(self.st))
 
     def _commit(self, context):
-        pts = [tuple(p) for p in self.points]
+        sides, fixed = self.sides, self.fixed
         self._clear_preview()
-        bpy.ops.hb_retopo.patch(points=[{"name": "", "co": p} for p in pts], resolution=self.st.resolution,
-                                relax=self.st.relax, layout=self.st.layout)
-        self.points = []
+        pts = [{"name": "", "co": tuple(q), "side": k, "fixed": fixed[k]} for k, s in enumerate(sides) for q in s]
+        kw = {k: getattr(self.st, k) for k in PATCH_KEYS}
+        bpy.ops.hb_retopo.patch(points=pts, **kw)
+        self.nodes, self.strokes, self.sides, self.fixed = [], {}, None, None
         self._refresh_verts()
 
-    # --- operator ------------------------------------------------------------------
+    def _outline_length(self):
+        pts = [c for c, _k in self.nodes]
+        return max(1e-6, sum((pts[i + 1] - pts[i]).length for i in range(len(pts) - 1)) +
+                   ((pts[0] - pts[-1]).length if len(pts) > 1 else 0))
+
+    # --- operator -----------------------------------------------------------------------
     def invoke(self, context, event):
         self.st = context.scene.hb_retopo
         self.obj = retopo_object(context)
@@ -315,86 +498,167 @@ mouse wheel sets the density, click / Enter to keep it"""
         if not self.surf:
             self.report({'WARNING'}, "No surface to draw on: show the object(s) to retopologize")
             return {'CANCELLED'}
-        self.points, self.preview, self.hover, self.closing = [], None, None, False
+        self.nodes, self.strokes = [], {}
+        self.stroke, self.press = None, None
+        self.preview, self.sides, self.fixed = None, None, None
+        self.hover, self.closing, self.shift = None, False, False
         self.old_verts = set()
         self._refresh_verts()
-        p = self._pick(self._mouse(event))
-        if p is not None:
-            self.points.append(p)
+        self._press(event)                  # the click that started the tool
         self._handle = bpy.types.SpaceView3D.draw_handler_add(_draw_view, (self,), 'WINDOW', 'POST_VIEW')
+        self._hud = bpy.types.SpaceView3D.draw_handler_add(_draw_hud, (self,), 'WINDOW', 'POST_PIXEL')
         context.window_manager.modal_handler_add(self)
-        self._header(context)
         return {'RUNNING_MODAL'}
 
     def _finish(self, context):
         bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
+        bpy.types.SpaceView3D.draw_handler_remove(self._hud, 'WINDOW')
         context.area.header_text_set(None)
         context.area.tag_redraw()
 
+    # LMB press / drag / release while drawing the outline
+    def _press(self, event):
+        self.press = (self._mouse(event), bool(event.shift))
+        self.stroke = None
+
+    def _drag(self, event):
+        mouse = self._mouse(event)
+        start, _shift = self.press
+        if self.stroke is None:
+            if (mouse - start).length < DRAG_PX:
+                return
+            first = self._pick(start)
+            if first is None:
+                return
+            if not self.nodes:
+                self.nodes.append((first, True))
+            elif (self.nodes[-1][0] - first).length > 1e-9:
+                self.nodes.append((first, True))
+            self.stroke = [self.nodes[-1][0].copy()]
+            self._last_px = start
+        if (mouse - self._last_px).length >= 4:
+            hit = self._surface_hit(mouse)
+            if hit is not None:
+                self.stroke.append(hit)
+                self._last_px = mouse
+
+    def _release(self, context, event):
+        mouse = self._mouse(event)
+        start, shift = self.press
+        self.press = None
+        if self.stroke is not None and len(self.stroke) >= 2:      # freehand stroke
+            stroke = self.stroke
+            self.stroke = None
+            if self._near_first(mouse):
+                self.strokes[len(self.nodes) - 1] = stroke + [self.nodes[0][0].copy()]
+                self._close(context)
+                return
+            end = self._pick(mouse) or stroke[-1]
+            self.strokes[len(self.nodes) - 1] = stroke[:-1] + [end]
+            self.nodes.append((end, True))
+            return
+        self.stroke = None
+        if self._near_first(mouse):
+            self._close(context)
+            return
+        p = self._pick(mouse)
+        if p is not None:
+            self.nodes.append((p, not shift))
+
+    def _adjust(self, context, event):
+        """Patch settings keys while the patch is shown. Returns True if handled."""
+        s = self.st
+        t, shift = event.type, event.shift
+        if t in {'WHEELUPMOUSE', 'NUMPAD_PLUS', 'EQUAL', 'WHEELDOWNMOUSE', 'NUMPAD_MINUS', 'MINUS'}:
+            up = t in {'WHEELUPMOUSE', 'NUMPAD_PLUS', 'EQUAL'}
+            if s.density_mode == 'SEGMENTS':
+                s.resolution = max(1, s.resolution + (1 if up else -1))
+            else:
+                s.edge_length = s.edge_length * (0.9 if up else 1.0 / 0.9)
+        elif t == 'D':
+            if s.density_mode == 'SEGMENTS':
+                s.density_mode = 'LENGTH'
+                if self.preview:
+                    lens = [f.calc_perimeter() / 4 for f in self.preview if f.is_valid]
+                    if lens:
+                        s.edge_length = sum(lens) / len(lens) * self.obj.matrix_world.median_scale
+            else:
+                s.density_mode = 'SEGMENTS'
+        elif t == 'L':
+            keys = [i[0] for i in LAYOUT_ITEMS]
+            s.layout = keys[(keys.index(s.layout) + 1) % len(keys)]
+        elif t == 'R':
+            s.relax = max(0, s.relax + (-1 if shift else 1))
+        elif t == 'S':
+            s.side_smooth = max(0, s.side_smooth + (-1 if shift else 1))
+        elif t == 'C':
+            s.conform = 'NONE' if s.conform == 'SURFACE' else 'SURFACE'
+        elif t == 'G':
+            s.strength = min(1.0, max(0.0, s.strength + (-0.1 if shift else 0.1)))
+        elif t == 'F':
+            step = self._outline_length() * 0.0025
+            s.offset = s.offset + (-step if shift else step)
+        else:
+            return False
+        self._rebuild(context)
+        return True
+
     def modal(self, context, event):
         context.area.tag_redraw()
+        self.shift = event.shift
         mouse = self._mouse(event)
         if event.type in {'MIDDLEMOUSE', 'TRACKPADPAN', 'TRACKPADZOOM'} or \
-                (event.type in {'WHEELUPMOUSE', 'WHEELDOWNMOUSE'} and (event.ctrl or event.shift)):
+                (event.type in {'WHEELUPMOUSE', 'WHEELDOWNMOUSE'} and event.ctrl):
             return {'PASS_THROUGH'}
 
+        # --- patch shown: tune it ---
+        if self.preview is not None:
+            if event.value == 'PRESS' and self._adjust(context, event):
+                return {'RUNNING_MODAL'}
+            if event.type in {'LEFTMOUSE', 'RET', 'NUMPAD_ENTER', 'SPACE'} and event.value == 'PRESS':
+                self._commit(context)
+            elif event.type in {'BACK_SPACE'} and event.value == 'PRESS':
+                self._clear_preview()           # back to the outline
+            elif event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
+                self._clear_preview()
+                self.nodes, self.strokes = [], {}
+            return {'RUNNING_MODAL'}
+
+        # --- drawing the outline ---
         if event.type == 'MOUSEMOVE':
-            if self.preview is None:
+            if self.press is not None:
+                self._drag(event)
+            else:
                 self.hover = self._pick(mouse)
                 self.closing = self._near_first(mouse)
             return {'RUNNING_MODAL'}
-
-        if event.type in {'WHEELUPMOUSE', 'NUMPAD_PLUS', 'EQUAL'} and event.value == 'PRESS':
-            self.st.resolution += 1
-            if self.preview is not None:
-                self._make_preview(context)
-            self._header(context)
+        if event.type == 'LEFTMOUSE':
+            if event.value == 'PRESS':
+                self._press(event)
+            elif event.value == 'RELEASE' and self.press is not None:
+                self._release(context, event)
             return {'RUNNING_MODAL'}
-        if event.type in {'WHEELDOWNMOUSE', 'NUMPAD_MINUS', 'MINUS'} and event.value == 'PRESS':
-            self.st.resolution = max(1, self.st.resolution - 1)
-            if self.preview is not None:
-                self._make_preview(context)
-            self._header(context)
-            return {'RUNNING_MODAL'}
-
-        if event.type == 'LEFTMOUSE' and event.value == 'PRESS':
-            if self.preview is not None:
-                self._commit(context)
-            elif self._near_first(mouse):
-                self._make_preview(context)
+        if event.type in {'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'NUMPAD_PLUS', 'NUMPAD_MINUS'} and event.value == 'PRESS':
+            s = self.st
+            up = event.type in {'WHEELUPMOUSE', 'NUMPAD_PLUS'}
+            if s.density_mode == 'SEGMENTS':
+                s.resolution = max(1, s.resolution + (1 if up else -1))
             else:
-                p = self._pick(mouse)
-                if p is not None:
-                    self.points.append(p)
-            self._header(context)
+                s.edge_length *= 0.9 if up else 1 / 0.9
             return {'RUNNING_MODAL'}
-
         if event.type in {'RET', 'NUMPAD_ENTER', 'SPACE'} and event.value == 'PRESS':
-            if self.preview is not None:
-                self._commit(context)
-            elif len(self.points) >= 3:
-                self._make_preview(context)
-            self._header(context)
+            self._close(context)
             return {'RUNNING_MODAL'}
-
-        if event.type in {'BACK_SPACE', 'DEL'} and event.value == 'PRESS' or \
-                (event.type == 'Z' and event.ctrl and event.value == 'PRESS'):
-            if self.preview is not None:
-                self._clear_preview()
-            elif self.points:
-                self.points.pop()
-            self._header(context)
+        if (event.type == 'BACK_SPACE' or (event.type == 'Z' and event.ctrl)) and event.value == 'PRESS':
+            if self.nodes:
+                last = len(self.nodes) - 1
+                self.strokes.pop(last - 1, None)
+                self.strokes.pop(last, None)
+                self.nodes.pop()
             return {'RUNNING_MODAL'}
-
         if event.type in {'RIGHTMOUSE', 'ESC'} and event.value == 'PRESS':
-            if self.preview is not None:
-                self._clear_preview()
-                self.points = []
-                self._header(context)
-                return {'RUNNING_MODAL'}
-            if self.points:
-                self.points = []
-                self._header(context)
+            if self.nodes:
+                self.nodes, self.strokes = [], {}
                 return {'RUNNING_MODAL'}
             self._finish(context)
             return {'FINISHED'}
@@ -404,12 +668,24 @@ mouse wheel sets the density, click / Enter to keep it"""
 # ----------------------------------------------------------------------------
 # Toolbar tool with Tool Settings
 
+class VIEW3D_PT_hb_retopo_options(bpy.types.Panel):
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'HEADER'
+    bl_label = "Retopo Pen Options"
+
+    def draw(self, context):
+        self.layout.use_property_split = True
+        draw_patch_settings(self.layout, context.scene.hb_retopo)
+        self.layout.prop(context.scene.hb_retopo, "snap_px")
+
+
 def _tool_settings(context, layout, tool):
     st = context.scene.hb_retopo
-    layout.prop(st, "resolution")
+    layout.prop(st, "resolution" if st.density_mode == 'SEGMENTS' else "edge_length")
     layout.prop(st, "relax")
     layout.prop(st, "layout", text="")
-    layout.prop(st, "snap_px")
+    layout.prop(st, "conform", text="")
+    layout.popover("VIEW3D_PT_hb_retopo_options", text="", icon='PREFERENCES')
 
 
 def _make_tool(mode):
@@ -418,16 +694,17 @@ def _make_tool(mode):
         "bl_context_mode": mode,
         "bl_idname": "hb_retopo.pen_tool",
         "bl_label": "Retopo Pen",
-        "bl_description": ("Click corner points on the surface, close the loop for a quad patch; "
-                           "mouse wheel: density"),
+        "bl_description": ("Click: corner, Shift+click: curve point, drag: freehand. Close the outline "
+                           "for a quad patch, then tune density / relax / smoothing / conform"),
         "bl_icon": "ops.mesh.polybuild_hover",
-        "bl_keymap": (("hb_retopo.pen", {"type": 'LEFTMOUSE', "value": 'PRESS'}, None),),
+        "bl_keymap": (("hb_retopo.pen", {"type": 'LEFTMOUSE', "value": 'PRESS'}, None),
+                      ("hb_retopo.pen", {"type": 'LEFTMOUSE', "value": 'PRESS', "shift": True}, None)),
         "draw_settings": _tool_settings,
     })
 
 
 _tools = []
-classes = (HBRetopoSettings, HBRetopoPoint, HB_RETOPO_OT_patch, HB_RETOPO_OT_pen)
+classes = (HBRetopoSettings, HBRetopoPoint, HB_RETOPO_OT_patch, HB_RETOPO_OT_pen, VIEW3D_PT_hb_retopo_options)
 
 
 def register():
