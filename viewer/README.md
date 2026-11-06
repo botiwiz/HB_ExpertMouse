@@ -41,6 +41,18 @@ Then `chmod +x HB_Viewer-x86_64.AppImage` and run it, optionally with a file or 
 - **Keyboard:** goes to f3d itself, so all of f3d's keys work (G grid, E edges, X axis, Space animation…). The "f3d keyboard cheatsheet" command lists them.
 - **Commands** (menu "3D", all can be pinned as Favorites): Reset camera, Front/Top/Right/Isometric view, Toggle grid, Toggle edges, Toggle axis, Toggle orthographic camera, Play/pause animation, FPS counter, Model info, f3d cheatsheet. Ctrl+D opens the model in the external f3d app.
 
+## View modes and preview panel
+
+Two buttons at the start of the toolbar:
+
+- **View mode**: click it to cycle through the modes, or use its arrow to pick one: **Details** (list with columns), **Icons**, **Thumbnails** (icons showing file previews) and **Cascade** (columns, below). Details, Icons and Thumbnails are Dolphin's own view modes.
+- **Preview panel** (also **F12**): shows or hides a panel on the right of the browser. It previews the selected file in any view mode:
+  - pictures use HB Viewer's fast decoder (huge PSDs included) and show dimensions and format;
+  - other files show your system's thumbnail;
+  - every file shows its name, type, size and date.
+
+  You can drag the panel's edge to resize it, and the app remembers whether it's open.
+
 ## Cascade view (columns)
 
 Press **Ctrl+4** or **F8**, or use "Cascade (column) view" in the Browser menu, to switch the browser to a cascade (Miller-column) explorer. Press it again to go back to the Dolphin view. The app remembers your choice.

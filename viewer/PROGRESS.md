@@ -65,12 +65,16 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - Toggle vs Dolphin view (command "cascade", Ctrl+4); shares Places + KUrlNavigator; same activation rules
   (images/3D -> viewer, other files -> default app); own copy/cut/paste/rename/trash/hidden keys.
 
-## IN PROGRESS: preview side panel + view-mode button (user request)
+## DONE (CI verified: Dolphin actions icons/compact/details/show_preview exist, modes switch): preview side panel + view-mode button
 - Branch now: claude/epic-cerf-9rg62w (default; HB_Viewer was merged via PR #1 and deleted).
 - src/previewpane.*: shared preview widget (our decoder for images, KIO thumbnails otherwise, file info);
   used by the cascade's preview column AND a toggleable right side panel (command "preview_panel", F12).
 - Toolbar "view_mode" button (dropdown + click cycles): Details / Icons / Thumbnails / Cascade.
   Dolphin part actions used: "details", "icons", "show_preview" (names printed by --selftest to verify).
+
+## 3D ghosting fix (user report)
+- f3d external window composites over the bound FBO (BlitToCurrent + BlitToRenderFramebuffer), so stale frames
+  showed through. ModelView::beginGL()/paintGL now clear the FBO before every f3d render. Needs user confirmation.
 
 ## Ideas / TODO
 - Browser: preview pane, back/forward history, f3d thumbnails for 3D files (f3d --output), drag files out.
