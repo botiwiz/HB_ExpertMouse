@@ -767,6 +767,11 @@ void MainWindow::loadSettings() {
         if (!favs_.contains("f3d_cheatsheet")) favs_.append("f3d_cheatsheet");
         s.setValue("favorites/added_f3d_cheatsheet", true);
     }
+    if (!s.value("favorites/added_f3d_halfres", false).toBool()) {      // once: half-resolution toggle
+        int i = favs_.indexOf("f3d_cheatsheet");
+        if (!favs_.contains("f3d_halfres")) favs_.insert(i >= 0 ? i : favs_.size(), "f3d_halfres");
+        s.setValue("favorites/added_f3d_halfres", true);
+    }
 }
 
 void MainWindow::saveSettings() {
