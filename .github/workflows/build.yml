@@ -3,28 +3,64 @@ on:
   push:
   workflow_dispatch:
 jobs:
-  build:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Build with the in-box csc.exe
-        shell: cmd
-        run: build.bat
-      - uses: actions/upload-artifact@v4
-        with:
-          name: HB_ExpertMouse
-          path: HB_ExpertMouse.exe
-
-  linux-appimage:
-    # oldest supported runner -> AppImage runs on distros with older glibc too
-    runs-on: ubuntu-22.04
+  viewer-appimage:
+    # Debian trixie: Qt 6.8, KDE Frameworks 6, Dolphin 24.12 (the app embeds the system's Dolphin)
+    runs-on: ubuntu-latest
+    container: debian:trixie
     steps:
       - uses: actions/checkout@v4
       - name: Install build deps
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends cmake g++ make extra-cmake-modules qt6-base-dev \
+            libkf6parts-dev libkf6kio-dev libkf6xmlgui-dev libkf6colorscheme-dev libkf6configwidgets-dev \
+            libkf6coreaddons-dev dolphin breeze xvfb xauth curl file ca-certificates \
+            libgl1 libegl1 libglx-mesa0 libgl1-mesa-dri libxt6t64 libx11-6 xz-utils python3
+      - name: Show KParts navigation API (for reference)
+        run: grep -nE "void (openUrlRequest|openUrlRequestDelayed|popupMenu|selectionInfo|setLocationBarUrl)" /usr/include/KF6/KParts/kparts/navigationextension.h || true
+      - name: Download f3d SDK (prebuilt libf3d) v4.0.1
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" https://api.github.com/repos/f3d-app/f3d/releases/tags/v4.0.1 > rel.json
+          python3 -c "import json; [print(a['name']) for a in json.load(open('rel.json'))['assets']]"
+          URL=$(python3 -c "
+          import json,re
+          a=[x for x in json.load(open('rel.json'))['assets'] if re.search(r'Linux.*x86_64.*\.tar\.(gz|xz)$', x['name'])]
+          a.sort(key=lambda x: (any(k in x['name'].lower() for k in ('raytracing','headless','egl','osmesa','python')), len(x['name'])))
+          print(a[0]['browser_download_url'])")
+          echo "Using $URL"
+          mkdir -p /opt/f3d && curl -fsSL "$URL" | tar -x -a -f - -C /opt/f3d --strip-components=1 || (curl -fsSL -o f3d.tar "$URL" && tar -xaf f3d.tar -C /opt/f3d --strip-components=1)
+          ls /opt/f3d /opt/f3d/lib | head -50
+          find /opt/f3d -name "f3dConfig.cmake" -o -name "f3d-config.cmake"
       - name: Build AppImage
-        run: linux/build-appimage.sh
+        run: F3D_SDK=/opt/f3d viewer/build-appimage.sh
+      - name: Self-test (loads Dolphin under Xvfb)
+        run: |
+          ls /usr/lib/*/qt6/plugins/kf6/parts/ || true
+          xvfb-run -a -s "-screen 0 1280x900x24" viewer/build/app/hb_viewer --selftest /usr/share selftest.png
+          # 3D: a small OBJ must render inside the embedded f3d view
+          printf 'v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 0 0 1\nv 1 0 1\nv 1 1 1\nv 0 1 1\nf 1 2 3 4\nf 5 8 7 6\nf 1 5 6 2\nf 2 6 7 3\nf 3 7 8 4\nf 5 1 4 8\n' > /tmp/cube.obj
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x900x24" viewer/build/app/hb_viewer --selftest /tmp/cube.obj selftest3d.png
+          # cascade view: open a deep folder, expect several columns
+          HBV_SELFTEST_CASCADE=1 xvfb-run -a -s "-screen 0 1280x900x24" viewer/build/app/hb_viewer --selftest /usr/share/icons/hicolor selftest_cascade.png
+      - name: Self-test the packaged AppImage (SDK hidden, bundled libs only)
+        run: |
+          mv /opt/f3d /opt/f3d.hidden
+          cd /tmp && /__w/HB_MISC/HB_MISC/viewer/HB_Viewer-x86_64.AppImage --appimage-extract >/dev/null
+          ls -la squashfs-root/usr/lib; du -sh squashfs-root
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x900x24" /tmp/squashfs-root/AppRun --selftest /tmp/cube.obj /tmp/appimage3d.png
+          ls -la /__w/HB_MISC/HB_MISC/viewer/HB_Viewer-x86_64.AppImage
       - uses: actions/upload-artifact@v4
         with:
-          name: HB_ExpertMouse-AppImage
-          path: linux/HB_ExpertMouse-x86_64.AppImage
+          name: HB_Viewer-AppImage
+          path: viewer/HB_Viewer-x86_64.AppImage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: HB_Viewer-selftest-screenshot
+          path: |
+            selftest.png
+            selftest3d.png
+            selftest3d.png.3d.png
+            selftest_cascade.png

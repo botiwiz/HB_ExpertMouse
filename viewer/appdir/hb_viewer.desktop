@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=HB Viewer
+Comment=Fast image viewer for huge PSD/PSB and common formats
+Exec=hb_viewer %f
+Icon=hb_viewer
+Terminal=false
+Categories=Graphics;Viewer;
+MimeType=image/vnd.adobe.photoshop;image/x-photoshop;image/png;image/jpeg;image/gif;image/bmp;image/tiff;image/webp;image/avif;image/heif;image/x-tga;image/x-icon;image/svg+xml;image/x-portable-pixmap;image/vnd.radiance;image/x-canon-cr2;image/x-nikon-nef;image/x-sony-arw;image/x-adobe-dng;
