@@ -476,7 +476,9 @@ void MainWindow::buildCommands() {
         f3dCmd("f3d_anim", "Play / pause animation", "media-playback-start", "toggle_animation");
         f3dCmd("f3d_fps", "Toggle FPS counter", "speedometer", "toggle ui.fps");
         f3dCmd("f3d_metadata", "Toggle model info", "documentinfo", "toggle ui.metadata");
-        f3dCmd("f3d_cheatsheet", "f3d keyboard cheatsheet", "help-keybord-shortcuts", "toggle ui.cheatsheet");
+        addCmd("f3d_cheatsheet", "f3d keyboard cheatsheet", "3D", "help-keyboard-shortcuts",
+               {K(Qt::Key_Question), K(Qt::CTRL | Qt::Key_F1)},           // active while the 3D view has focus
+               [this] { if (model_) model_->command("toggle ui.cheatsheet"); }, M);
         // keys of ours that must win inside the 3D view
         for (const Command& c : cmds_) {
             auto scoped = [&](const QList<QKeySequence>& keys) {
@@ -760,6 +762,10 @@ void MainWindow::loadSettings() {
         for (const char* id : {"preview_panel", "view_mode"})
             if (!favs_.contains(id)) favs_.insert(std::min<int>(1, favs_.size()), id);
         s.setValue("favorites/added_view_buttons", true);
+    }
+    if (!s.value("favorites/added_f3d_cheatsheet", false).toBool()) {   // once: f3d cheatsheet button
+        if (!favs_.contains("f3d_cheatsheet")) favs_.append("f3d_cheatsheet");
+        s.setValue("favorites/added_f3d_cheatsheet", true);
     }
 }
 
