@@ -4,6 +4,7 @@
 #pragma once
 #include <KFileItem>
 #include <QColumnView>
+#include <QPersistentModelIndex>
 #include <QUrl>
 #include <QWidget>
 
@@ -18,8 +19,10 @@ public:
     using QColumnView::QColumnView;
 signals:
     void menuRequested(QAbstractItemView* column, QPoint pos);
+    void horizontalKey(bool right);                 // Left/Right pressed in any column
 protected:
     QAbstractItemView* createColumn(const QModelIndex& root) override;
+    bool eventFilter(QObject* o, QEvent* e) override;
 };
 
 class ColumnBrowser : public QWidget {
@@ -34,6 +37,8 @@ public:
     bool showHidden() const { return hidden_; }
     QAbstractItemView* view() const { return view_; }
     int columnCount() const;                             // for the self-test
+    QUrl currentUrl() const;                             // item with the keyboard cursor
+    void pressKey(int key);                              // self-test: simulate Left/Right
 
 signals:
     void activated(const KFileItem& item);              // double-click / Enter on a file
@@ -45,6 +50,10 @@ private:
     QUrl rootFor(const QUrl& u) const;
     KFileItem itemAt(const QModelIndex& proxyIndex) const;
     void showPreview(const QModelIndex& proxyIndex);
+    void goLeft();
+    void goRight();
+    void selectIndex(const QModelIndex& proxyIndex);     // current + selected + focus its column
+    void selectFirstChildOfPending();
 
     CascadeView* view_;
     KDirModel* model_;
@@ -53,4 +62,5 @@ private:
     PreviewPane* pane_;
     QUrl root_, folder_, target_;
     bool hidden_ = false;
+    QPersistentModelIndex enterPending_;              // Right pressed on a folder still being listed
 };

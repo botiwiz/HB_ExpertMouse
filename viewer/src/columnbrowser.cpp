@@ -9,6 +9,7 @@
 #include <QIcon>
 #include <QCoreApplication>
 #include <QItemSelectionModel>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QListView>
 #include <QPointer>
@@ -19,7 +20,20 @@ QAbstractItemView* CascadeView::createColumn(const QModelIndex& root) {
     QAbstractItemView* col = QColumnView::createColumn(root);
     col->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(col, &QWidget::customContextMenuRequested, this, [this, col](const QPoint& p) { emit menuRequested(col, p); });
+    col->installEventFilter(this);
     return col;
+}
+
+// Left/Right are handled by ColumnBrowser (Qt's own handling needs already-listed folders)
+bool CascadeView::eventFilter(QObject* o, QEvent* e) {
+    if (e->type() == QEvent::KeyPress) {
+        auto* k = static_cast<QKeyEvent*>(e);
+        if ((k->key() == Qt::Key_Left || k->key() == Qt::Key_Right) && !(k->modifiers() & ~Qt::KeypadModifier)) {
+            emit horizontalKey(k->key() == Qt::Key_Right);
+            return true;
+        }
+    }
+    return QColumnView::eventFilter(o, e);
 }
 
 
@@ -52,6 +66,20 @@ ColumnBrowser::ColumnBrowser(QWidget* parent) : QWidget(parent) {
     view_->setPreviewWidget(pane_);
 
     connect(view_, &QColumnView::updatePreviewWidget, this, &ColumnBrowser::showPreview);
+    connect(view_, &CascadeView::horizontalKey, this, [this](bool right) { if (right) goRight(); else goLeft(); });
+    // Right on a folder that KIO is still listing: pick its first item as soon as items arrive,
+    // and once more when the listing completes (sorting may have changed which item is first)
+    connect(proxy_, &QAbstractItemModel::rowsInserted, this, [this](const QModelIndex& parent) {
+        if (enterPending_.isValid() && parent == QModelIndex(enterPending_)) selectFirstChildOfPending();
+    });
+    connect(model_->dirLister(), &KCoreDirLister::listingDirCompleted, this, [this](const QUrl& u) {
+        if (!enterPending_.isValid()) return;
+        KFileItem it = itemAt(enterPending_);
+        if (!it.isNull() && it.url().adjusted(QUrl::StripTrailingSlash) == u.adjusted(QUrl::StripTrailingSlash)) {
+            selectFirstChildOfPending();
+            enterPending_ = QPersistentModelIndex();
+        }
+    });
     connect(view_, &QAbstractItemView::activated, this, [this](const QModelIndex& i) {
         KFileItem it = itemAt(i);
         if (!it.isNull() && !it.isDir()) emit activated(it);   // folders just open the next column
@@ -132,6 +160,48 @@ void ColumnBrowser::setShowHidden(bool on) {
     hidden_ = on;
     model_->dirLister()->setShowHiddenFiles(on);
     model_->dirLister()->emitChanges();
+}
+
+void ColumnBrowser::selectIndex(const QModelIndex& i) {
+    if (!i.isValid()) return;
+    view_->setCurrentIndex(i);
+    view_->selectionModel()->select(i, QItemSelectionModel::ClearAndSelect);
+    // keyboard focus goes to the column that shows this item
+    for (QAbstractItemView* col : view_->findChildren<QAbstractItemView*>())
+        if (col != view_ && col->rootIndex() == i.parent()) { col->setFocus(); col->scrollTo(i); break; }
+}
+
+void ColumnBrowser::selectFirstChildOfPending() {
+    QModelIndex parent = enterPending_;
+    if (!parent.isValid() || proxy_->rowCount(parent) == 0) return;
+    QModelIndex cur = view_->currentIndex();
+    // only while the user hasn't moved somewhere else in the meantime
+    if (cur != parent && cur.parent() != parent) { enterPending_ = QPersistentModelIndex(); return; }
+    selectIndex(proxy_->index(0, 0, parent));
+}
+
+QUrl ColumnBrowser::currentUrl() const { KFileItem it = itemAt(view_->currentIndex()); return it.isNull() ? QUrl() : it.url(); }
+void ColumnBrowser::pressKey(int key) { if (key == Qt::Key_Right) goRight(); else if (key == Qt::Key_Left) goLeft(); }
+
+void ColumnBrowser::goLeft() {
+    enterPending_ = QPersistentModelIndex();
+    QModelIndex cur = view_->currentIndex();
+    if (!cur.isValid()) return;
+    QModelIndex parent = cur.parent();
+    if (parent.isValid()) selectIndex(parent);           // the parent folder, its contents stay open on the right
+}
+
+void ColumnBrowser::goRight() {
+    QModelIndex cur = view_->currentIndex();
+    if (!cur.isValid()) {                                  // nothing selected yet: first item of the root column
+        if (proxy_->rowCount(view_->rootIndex()) > 0) selectIndex(proxy_->index(0, 0, view_->rootIndex()));
+        return;
+    }
+    KFileItem it = itemAt(cur);
+    if (it.isNull() || !it.isDir()) return;
+    if (proxy_->rowCount(cur) > 0) { enterPending_ = QPersistentModelIndex(); selectIndex(proxy_->index(0, 0, cur)); return; }
+    enterPending_ = QPersistentModelIndex(cur);            // not listed yet: list it, select when items arrive
+    if (proxy_->canFetchMore(cur)) proxy_->fetchMore(cur);
 }
 
 void ColumnBrowser::showPreview(const QModelIndex& i) { pane_->showItem(itemAt(i)); }

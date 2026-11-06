@@ -13,6 +13,7 @@
 #include <QApplication>
 #include <QPalette>
 #include <QStyleFactory>
+#include <QEventLoop>
 #include <QTimer>
 #include <cstdio>
 #include <cstring>
@@ -84,6 +85,18 @@ int main(int argc, char** argv) {
                 printf("cascade: columns=%d folder=%s selected=%lld\n", cols, c->url().toDisplayString().toLocal8Bit().constData(),
                        (long long)c->selectedItems().size());
                 if (cols < 2) rc = 5;
+                // keyboard: Right enters the selected folder (first item), Left goes back to it
+                auto wait = [](int ms) { QEventLoop l; QTimer::singleShot(ms, &l, &QEventLoop::quit); l.exec(); };
+                QUrl start = c->currentUrl();
+                c->pressKey(Qt::Key_Right); wait(2000);
+                QUrl in = c->currentUrl();
+                c->pressKey(Qt::Key_Left); wait(300);
+                QUrl back = c->currentUrl();
+                bool okIn = in.adjusted(QUrl::RemoveFilename | QUrl::StripTrailingSlash) == start.adjusted(QUrl::StripTrailingSlash);
+                printf("cascade keys: start=%s right=%s left=%s -> %s\n", start.path().toLocal8Bit().constData(),
+                       in.path().toLocal8Bit().constData(), back.path().toLocal8Bit().constData(),
+                       okIn && back == start ? "OK" : "FAIL");
+                if (!(okIn && back == start)) rc = 6;
             }
 #ifdef HBV_HAVE_F3D
             printf("f3d: %s\n", ModelView::f3dVersion().toLocal8Bit().constData());
