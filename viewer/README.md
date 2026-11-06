@@ -33,6 +33,25 @@ Then `chmod +x HB_Viewer-x86_64.AppImage` and run it, optionally with a file or 
 
 > PSDs saved with **Maximize Compatibility** turned off may not contain a usable merged image, and may show blank. Photoshop turns this option on by default.
 
+## Video and audio player (mpv)
+
+Videos and audio files open inside the window, played by **libmpv**, the engine behind mpv, Haruna and Celluloid. It uses your system's libmpv (install `mpv` or `libmpv2` if it's missing). Without it, those files open in your default player instead.
+
+- Controls: play/pause, seek bar, time, mute, volume and full screen.
+- Keys: Space/K play or pause; ←/→ seek 5 s (Shift for 1 s); ↑/↓ seek 1 min; 9/0 volume; M mute; , and . step back/forward one frame; [ and ] change speed (Backspace resets it); L sets an A-B loop; F or Enter toggles full screen.
+- Mouse: click to play or pause, double-click for full screen, wheel for volume.
+- PgUp/PgDn go to the previous or next file in the folder (pictures, 3D and videos together). Esc goes back to the browser.
+
+## GPU rendering
+
+Pictures, 3D models and video are all drawn on the GPU:
+
+- **Pictures:** the visible tiles are uploaded as textures, within a video-memory budget, and drawn by a shader.
+- **3D:** f3d renders off-screen through EGL or GLX, with no software fallback.
+- **Video:** mpv decodes on the GPU where your driver supports it (`hwdec=auto`) and shows the frames directly.
+
+If your system only has a software OpenGL (no GPU driver), the status bar says so.
+
 ## 3D viewer (f3d)
 
 3D files open inside the window, just like pictures. You can step through a folder with PgUp/PgDn or ←/→, and Esc goes back to the browser.
