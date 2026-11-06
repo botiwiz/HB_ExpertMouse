@@ -76,6 +76,10 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - f3d external window composites over the bound FBO (BlitToCurrent + BlitToRenderFramebuffer), so stale frames
   showed through. ModelView::beginGL()/paintGL now clear the FBO before every f3d render. Needs user confirmation.
 
+## Cascade arrow keys (user report) - DONE, CI verified
+- Left = select parent folder (focus moves to its column); Right = enter folder, select first item
+  (fetchMore + select when rows arrive / listing completes). ColumnBrowser::goLeft/goRight.
+
 ## Ideas / TODO
 - Browser: preview pane, back/forward history, f3d thumbnails for 3D files (f3d --output), drag files out.
 - Re-decode the visible region at full resolution when zooming into a downscaled huge PSD.
