@@ -72,7 +72,13 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - Toolbar "view_mode" button (dropdown + click cycles): Details / Icons / Thumbnails / Cascade.
   Dolphin part actions used: "details", "icons", "show_preview" (names printed by --selftest to verify).
 
-## 3D ghosting fix (user report)
+## 3D ghosting v2 (user still saw ghosting/stale frames with the FBO-clear fix)
+- ModelView is now a plain QWidget: f3d::engine::create(true) renders offscreen in its own GL context,
+  frames read back via window.renderToImage() (bottom-up -> flipped), coalesced per event-loop pass.
+- Cascade keys v2: Up/Down/Left/Right/Enter all driven from the view's current index (event filter on every
+  column), focus follows the new column (deferred). CI sends real key events: Right,Down,Left,Up -> OK.
+
+## 3D ghosting fix v1 (superseded)
 - f3d external window composites over the bound FBO (BlitToCurrent + BlitToRenderFramebuffer), so stale frames
   showed through. ModelView::beginGL()/paintGL now clear the FBO before every f3d render. Needs user confirmation.
 
