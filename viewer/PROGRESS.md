@@ -72,6 +72,13 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - Toolbar "view_mode" button (dropdown + click cycles): Details / Icons / Thumbnails / Cascade.
   Dolphin part actions used: "details", "icons", "show_preview" (names printed by --selftest to verify).
 
+## DONE (CI green, run 42186458573): batch of user fixes
+- Double open root cause: KParts NavigationExtension re-emits openUrlRequest as openUrlRequestDelayed
+  (QTimer 0); we listened to both. Now only the delayed one. Self-test HBV_SELFTEST_OPEN counts handler calls (=1).
+- F11 keeps toolbar/status bar; Ctrl+T and F11 stripped from Dolphin part actions so they always reach us.
+- f3d: no setSize on press (unless low-res mode), frames drawn 1:1; HDRI ambient + SSAO on;
+  cheatsheet on toolbar (favorites migration flag), shortcut ? / Ctrl+F1 in 3D view scope.
+
 ## DONE (CI green, run 42182804067): GPU-only rendering
 - f3d: EGL then GLX only, no OSMesa/auto fallback; warn if GL_RENDERER is llvmpipe/softpipe/swrast.
 - mpv: hwdec=auto (GPU decode), render API already GPU.
