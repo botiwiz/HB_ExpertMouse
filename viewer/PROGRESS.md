@@ -72,6 +72,12 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - Toolbar "view_mode" button (dropdown + click cycles): Details / Icons / Thumbnails / Cascade.
   Dolphin part actions used: "details", "icons", "show_preview" (names printed by --selftest to verify).
 
+## IN PROGRESS (user request): video player + double-open fix + 3D low-res off
+- Double open: onOpenUrlRequest connected to openUrlRequest AND openUrlRequestDelayed -> dedupe same URL <1.5 s.
+- Video: src/videoview.* = libmpv (dlopen libmpv.so.2 at runtime, headers from libmpv-dev at build) with
+  render API into QOpenGLWidget + controls bar. Missing libmpv -> default app. Videos+audio join files_ list.
+- 3D: half-res-while-moving now OFF by default (scaled the f3d overlays); toggle "f3d_lowres" in 3D menu.
+
 ## 3D speed (user: offscreen felt slower)
 - Mouse moves coalesced (one triggerMousePosition per frame), half-res renders while dragging/scrolling,
   EGL -> GLX -> auto backend; status bar shows backend (OSMesa = software = slow). Needs user feedback.
