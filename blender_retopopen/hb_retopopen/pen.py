@@ -39,6 +39,20 @@ def _patch_props():
                                description="How strongly the patch snaps onto the surface"),
         offset=FloatProperty(name="Offset", default=0.0, subtype='DISTANCE', unit='LENGTH',
                              description="Float the patch above (or below) the surface"),
+        projection=EnumProperty(name="Projection", items=(
+            ('NORMAL', "Along Normal", "Move points straight onto the surface along the patch's facing "
+                                       "direction (no sideways sliding off bumps)"),
+            ('NEAREST', "Nearest", "Closest point on the surface (better for patches wrapping far around)")),
+            default='NORMAL'),
+        subdiv=IntProperty(name="Subdivision", default=0, min=0, max=4,
+                           description="Split every edge 2, 4, 8 or 16 times (new vertices go onto the surface) "
+                                       "so the edges follow the surface; the layout stays the same"),
+        subdiv_auto=BoolProperty(name="Auto", default=False,
+                                 description="Pick the lowest subdivision level whose edges stay within "
+                                             "Tolerance of the surface"),
+        subdiv_tol=FloatProperty(name="Tolerance", default=0.02, min=0.001, max=0.5, subtype='FACTOR',
+                                 description="Auto subdivision: largest allowed gap between an edge and the "
+                                             "surface, as a fraction of the base edge length"),
     )
 
 
@@ -75,8 +89,18 @@ def draw_patch_settings(layout, data):
     col.prop(data, "conform")
     sub = col.column()
     sub.active = data.conform == 'SURFACE'
+    sub.prop(data, "projection")
     sub.prop(data, "strength", slider=True)
     sub.prop(data, "offset")
+    col.separator()
+    row = col.row(align=True)
+    sub = row.row(align=True)
+    sub.active = not data.subdiv_auto
+    sub.prop(data, "subdiv")
+    row.prop(data, "subdiv_auto", toggle=True)
+    sub = col.row()
+    sub.active = data.subdiv_auto
+    sub.prop(data, "subdiv_tol", slider=True)
 
 
 # ----------------------------------------------------------------------------
@@ -199,6 +223,8 @@ def outline_sides(nodes, strokes, conform):
 def sides_from_outline(context, obj, nodes, strokes, p):
     """Side polylines + which ones follow an existing open border (exact vertices)."""
     surf = surface.Surfaces(context, exclude=(obj,))
+    if p.projection == 'NORMAL':
+        p.direction = patch.patch_direction(surf, [c for c, _k in nodes])
     conform = patch.make_conform(surf, p)
     sides, corners = outline_sides(nodes, strokes, conform)
     if sides is None:
@@ -436,9 +462,13 @@ Click the first point (or Enter) to close it into a quad patch, then tune it and
                 ("Layout   %s      [L]" % dict((i[0], i[1]) for i in LAYOUT_ITEMS)[s.layout], True),
                 ("Relax    %d      [R / Shift+R]" % s.relax, True),
                 ("Side Smoothing  %d      [S / Shift+S]" % s.side_smooth, True),
-                ("Conform  %s      [C]" % dict((i[0], i[1]) for i in CONFORM_ITEMS)[s.conform], True),
+                ("Conform  %s, %s      [C,  P: projection]" % (dict((i[0], i[1]) for i in CONFORM_ITEMS)[s.conform],
+                                                          "along normal" if s.projection == 'NORMAL' else "nearest"), True),
                 ("Strength  %.2f      [G / Shift+G]" % s.strength, True),
                 ("Offset   %.4g      [F / Shift+F]" % s.offset, True),
+                (("Subdivision  auto -> level %d (gap %.3g)      [A,  T / Shift+T: tolerance %.3f]"
+                  % (self.last_level, self.last_gap, s.subdiv_tol)) if s.subdiv_auto else
+                 ("Subdivision  %d      [V / Shift+V,  A: auto]" % s.subdiv), True),
                 ("Click / Enter: keep    Backspace: edit outline    Esc: discard", False)]
 
     def _density_text(self):
@@ -472,7 +502,9 @@ Click the first point (or Enter) to close it into a quad patch, then tune it and
         # keep the BMesh wrapper alive: element references die with it
         self.bm = bm = bmesh.from_edit_mesh(self.obj.data)
         self.old_verts = set(bm.verts)
-        self.preview = build_patch(context, self.obj, self.sides, self.fixed, patch.Params.from_props(self.st))
+        params = patch.Params.from_props(self.st)
+        self.preview = build_patch(context, self.obj, self.sides, self.fixed, params)
+        self.last_level, self.last_gap = params.level, params.gap
 
     def _commit(self, context):
         sides, fixed = self.sides, self.fixed
@@ -503,6 +535,7 @@ Click the first point (or Enter) to close it into a quad patch, then tune it and
         self.preview, self.sides, self.fixed = None, None, None
         self.hover, self.closing, self.shift = None, False, False
         self.old_verts = set()
+        self.last_level, self.last_gap = 0, 0.0
         self._refresh_verts()
         self._press(event)                  # the click that started the tool
         self._handle = bpy.types.SpaceView3D.draw_handler_add(_draw_view, (self,), 'WINDOW', 'POST_VIEW')
@@ -598,6 +631,15 @@ Click the first point (or Enter) to close it into a quad patch, then tune it and
         elif t == 'F':
             step = self._outline_length() * 0.0025
             s.offset = s.offset + (-step if shift else step)
+        elif t == 'P':
+            s.projection = 'NEAREST' if s.projection == 'NORMAL' else 'NORMAL'
+        elif t == 'V':
+            s.subdiv_auto = False
+            s.subdiv = max(0, min(4, s.subdiv + (-1 if shift else 1)))
+        elif t == 'A':
+            s.subdiv_auto = not s.subdiv_auto
+        elif t == 'T':
+            s.subdiv_tol = min(0.5, max(0.001, s.subdiv_tol * (1 / 1.5 if shift else 1.5)))
         else:
             return False
         self._rebuild(context)

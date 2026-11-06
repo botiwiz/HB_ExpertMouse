@@ -36,6 +36,10 @@ A panel in the viewport lists everything, live:
 | **C** | Conform: *Surface* (snap onto it) / *Flat* |
 | **G / Shift+G** | Conform strength |
 | **F / Shift+F** | Offset above the surface |
+| **P** | Projection: *Along Normal* (no sideways sliding) / *Nearest* |
+| **V / Shift+V** | Edge subdivision level 0–4 (every edge split 2× … 16×, new vertices on the surface) |
+| **A** | Auto subdivision: the lowest level whose edges stay within *Tolerance* of the surface |
+| **T / Shift+T** | Auto tolerance (fraction of the base edge length) |
 | **Click / Enter** | Keep it, then draw the next one · **Backspace**: back to the outline · **Esc**: discard |
 
 After keeping, the redo panel (bottom-left) has all of these too, and the Tool Settings bar holds
@@ -43,6 +47,14 @@ the defaults (⚙ for the full list, plus *Snap Radius*).
 
 - **4 corners**: a grid (each pair of opposite sides gets its own count).
   **Any other number**: one quad region per corner around a centre pole — all quads.
+- **Edges follow the surface too**: *Subdivision* splits every edge (keeping the layout and its
+  poles) and puts the new vertices on the surface; *Auto* picks the level that brings every edge
+  within *Tolerance* of it. Left: level 0 cuts through the bumps; right: Auto (level 3).
+
+  ![level 0 vs auto subdivision](preview_subdivision.png)
+- **Projection along the patch's normal** (default): points move straight onto the surface instead
+  of sliding sideways off bumps into valleys (which stretches edges); it falls back to the closest
+  point where that finds nothing near. *Nearest* is there for patches that wrap far around.
 - **Every vertex lands on the surface**: after the patch is built and relaxed, each resulting
   vertex is projected onto the geometry underneath (with *Strength* / *Offset*), so a dense grid
   follows detail the outline didn't capture instead of clipping through it. Vertices shared with

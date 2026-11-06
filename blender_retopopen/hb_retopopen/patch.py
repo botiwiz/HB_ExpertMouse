@@ -27,12 +27,20 @@ class Params:
     conform = 'SURFACE'
     strength = 1.0
     offset = 0.0
+    projection = 'NORMAL'   # 'NORMAL': along the patch's normal direction, 'NEAREST': closest point
+    direction = None        # patch normal (world), set by build / outline code
+    subdiv = 0              # edge subdivision level: every edge split 2**level times
+    subdiv_auto = False     # pick the lowest level whose edges stay within subdiv_tol of the surface
+    subdiv_tol = 0.02       # as a fraction of the base (level 0) edge length
+    max_subdiv = 4
+    level = 0               # level actually used (set by build)
+    gap = 0.0               # largest edge-to-surface gap of the result (set by build)
 
     @classmethod
     def from_props(cls, data):
         p = cls()
         for k in ("resolution", "density_mode", "edge_length", "relax", "side_smooth", "layout",
-                  "conform", "strength", "offset"):
+                  "conform", "strength", "offset", "projection", "subdiv", "subdiv_auto", "subdiv_tol"):
             if hasattr(data, k):
                 setattr(p, k, getattr(data, k))
         return p
@@ -41,15 +49,55 @@ class Params:
 # ----------------------------------------------------------------------------
 # Conforming to the surface
 
+def patch_direction(surf, points):
+    """Average surface normal under the given points (world) - the patch's facing direction."""
+    n = Vector()
+    for q in points:
+        _loc, nrm = surf.nearest(q)
+        if nrm is not None:
+            n += nrm
+    return n.normalized() if n.length > 1e-9 else None
+
+
 def make_conform(surf, p):
-    """Function world point -> conformed world point."""
+    """Function world point -> conformed world point.
+    Projection 'NORMAL' moves points straight along the patch direction onto the surface, so they
+    don't slide sideways off bumps (closest-point projection would bunch them up in the valleys);
+    it falls back to the closest point where that ray finds nothing near."""
     if surf is None or not surf or p.conform == 'NONE':
         return lambda co: co.copy()
     strength, offset = p.strength, p.offset
+    d = p.direction if p.projection == 'NORMAL' else None
+
+    def target(co):
+        near, n_near = surf.nearest(co)
+        if d is None:
+            return near, n_near
+        if offset and n_near is not None:
+            # a point that is already floating at the offset casts from where it came from, so
+            # projecting again (relax passes, final pass) doesn't drift sideways
+            nn = n_near if n_near.dot(d) >= 0 else -n_near
+            co = co - nn * offset
+            near, n_near = surf.nearest(co)
+        best = None
+        for sign in (1.0, -1.0):
+            loc, nrm = surf.ray_cast(co, d * sign)
+            if loc is not None:
+                dist = (loc - co).length
+                if best is None or dist < best[0]:
+                    best = (dist, loc, nrm)
+        near_dist = (near - co).length
+        # use the ray hit unless it lands much further away than the closest point (e.g. the ray
+        # missed this part of the surface and hit something behind it)
+        if best is not None and best[0] <= 4.0 * near_dist + 1e-6 * max(1.0, co.length) + 0.05 * best[0]:
+            return best[1], best[2]
+        return near, n_near
 
     def conform(co):
-        loc, n = surf.nearest(co)
+        loc, n = target(co)
         if n is not None and offset:
+            if d is not None and n.dot(d) < 0:
+                n = -n
             loc = loc + n * offset
         return co.lerp(loc, strength) if strength < 1.0 else loc
     return conform
@@ -148,9 +196,10 @@ def coons(bottom, top, left, right):
 
 
 def _count(length, p, scale=1.0):
+    mult = 2 ** p.level
     if p.density_mode == 'LENGTH':
-        return max(1, round(length / max(p.edge_length, 1e-9)))
-    return max(1, round(p.resolution * scale))
+        return max(1, round(length / max(p.edge_length, 1e-9))) * mult
+    return max(1, round(p.resolution * scale)) * mult
 
 
 def grids_from_sides(sides, fixed, p, conform):
@@ -191,7 +240,10 @@ def grids_from_sides(sides, fixed, p, conform):
         return [coons(bottom, top, left, right)]
 
     avg = sum(lens) / n
-    m = max(1, round(_count(avg, p) / 2)) if p.density_mode == 'LENGTH' else max(1, round(p.resolution / 2))
+    if p.density_mode == 'LENGTH':
+        m = max(1, round(avg / max(p.edge_length, 1e-9) / 2)) * 2 ** p.level
+    else:
+        m = max(1, round(p.resolution / 2)) * 2 ** p.level
     even = [len(work[k]) - 1 for k in range(n) if fixed[k] and (len(work[k]) - 1) % 2 == 0 and len(work[k]) > 2]
     if even:
         m = even[0] // 2
@@ -214,7 +266,53 @@ def grids_from_sides(sides, fixed, p, conform):
 # Building
 
 def build(bm, sides, fixed, p, surf, mw_inv=None, weld_to=(), weld_dist=0.0):
-    """Create the patch in `bm` (object-local via mw_inv). Returns the new faces."""
+    """Create the patch in `bm` (object-local via mw_inv). Returns the new faces.
+    With p.subdiv_auto the edge subdivision level is raised until every edge stays within
+    p.subdiv_tol (x base edge length) of the surface; p.level / p.gap report the result."""
+    if p.projection == 'NORMAL' and p.direction is None and surf:
+        p.direction = patch_direction(surf, [q for side in sides for q in side[:: max(1, len(side) // 8)]])
+    auto = p.subdiv_auto and surf and p.conform == 'SURFACE'
+    levels = range(0, p.max_subdiv + 1) if auto else [max(0, min(p.max_subdiv, p.subdiv))]
+    base_edge = None
+    faces = []
+    for level in levels:
+        p.level = level
+        verts_before = set(bm.verts)
+        faces = _build_once(bm, sides, fixed, p, surf, mw_inv, weld_to, weld_dist)
+        p.gap, mean_edge = edge_gap(faces, surf, p.offset, mw_inv)
+        if base_edge is None:
+            base_edge = mean_edge * (2 ** level)
+        if not auto or p.gap <= p.subdiv_tol * base_edge or level == levels[-1]:
+            return faces
+        # not close enough to the surface yet: remove this try and go one level finer
+        new_verts = [v for f in faces if f.is_valid for v in f.verts if v not in verts_before]
+        bmesh.ops.delete(bm, geom=[f for f in faces if f.is_valid], context='FACES_ONLY')
+        bmesh.ops.delete(bm, geom=list({v for v in new_verts if v.is_valid and not v.link_faces}), context='VERTS')
+        loose = [e for e in bm.edges if not e.link_faces and (e.verts[0] not in verts_before or e.verts[1] not in verts_before)]
+        if loose:
+            bmesh.ops.delete(bm, geom=loose, context='EDGES')
+    return faces
+
+
+def edge_gap(faces, surf, offset, mw_inv):
+    """(largest distance between an edge's middle and the surface, mean edge length) - world space."""
+    if not faces or not surf:
+        return 0.0, 0.0
+    mw = mw_inv.inverted() if mw_inv is not None else None
+    edges = {e for f in faces if f.is_valid for e in f.edges}
+    gap, total = 0.0, 0.0
+    for e in edges:
+        a, b = e.verts[0].co, e.verts[1].co
+        if mw is not None:
+            a, b = mw @ a, mw @ b
+        total += (b - a).length
+        mid = (a + b) / 2
+        loc, _n = surf.nearest(mid)
+        gap = max(gap, abs((mid - loc).length - abs(offset)))
+    return gap, total / max(1, len(edges))
+
+
+def _build_once(bm, sides, fixed, p, surf, mw_inv=None, weld_to=(), weld_dist=0.0):
     conform = make_conform(surf, p)
     before = set(bm.faces)
     grids = grids_from_sides(sides, fixed, p, conform)
