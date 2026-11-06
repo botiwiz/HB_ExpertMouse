@@ -26,6 +26,7 @@ public:
     bool engineOk() const { return engine_ != nullptr; }
     QImage frame() const { return frame_; }   // last complete frame (self-test)
     static QString f3dVersion();
+    QString backend() const;                 // EGL / GLX / OSMesa (software)
 
 signals:
     void contextMenuRequested(QPoint globalPos);
@@ -49,6 +50,9 @@ private:
     void mods(Qt::KeyboardModifiers m);
     void syncSize();
     void busy();                           // keep refreshing for a moment (smooth camera, notifications)
+    void setInteracting(bool on);          // half-resolution renders while dragging / scrolling
+    double renderScale() const;            // window pixels per widget pixel
+    void sendPos(QPointF widgetPos);
 
     std::unique_ptr<f3d::engine> engine_;
     f3d::interactor* inter_ = nullptr;
@@ -56,6 +60,9 @@ private:
     QImage frame_;
     QString path_, error_;
     QPoint pressPos_;
-    bool rightDown_ = false, animating_ = false;
+    bool rightDown_ = false, animating_ = false, interacting_ = false, pendingMove_ = false;
+    QPointF lastPos_;                      // latest mouse position (widget px), sent once per frame
+    Qt::KeyboardModifiers lastMods_;
+    QTimer* settle_ = nullptr;             // ends wheel interaction
     qint64 busyUntil_ = 0;
 };

@@ -1023,7 +1023,7 @@ void MainWindow::updateStatus() {
         if (!model_->error().isEmpty()) l += "   cannot open: " + model_->error().left(200);
         else l += "   3D model   " + humanSize((double)QFileInfo(want_).size());
         statusL_->setText(l);
-        statusR_->setText("f3d " + ModelView::f3dVersion() + "   drag: rotate, middle: pan, wheel: zoom");
+        statusR_->setText("f3d " + ModelView::f3dVersion() + " (" + model_->backend() + ")   drag: rotate, middle: pan, wheel: zoom");
         return;
     }
 #endif

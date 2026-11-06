@@ -124,6 +124,7 @@ int main(int argc, char** argv) {
                 long diff = 0;
                 for (int y = 0; y < fb.height(); y += 2)
                     for (int x = 0; x < fb.width(); x += 2) if (fb.pixel(x, y) != bg) diff++;
+                printf("f3d backend: %s\n", m->backend().toLocal8Bit().constData());
                 printf("f3d model: %s engine=%d error='%s' size=%dx%d non_background_px=%ld\n",
                        m->path().toLocal8Bit().constData(), m->engineOk(), m->error().toLocal8Bit().constData(),
                        fb.width(), fb.height(), diff);
