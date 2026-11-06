@@ -25,6 +25,9 @@ if [ -n "$F3D_SDK" ]; then
         seen="$seen$lib "
         src=$(find "$F3D_SDK/lib" -maxdepth 2 -name "$lib" | head -1)
         [ -n "$src" ] || continue                     # system library: not bundled
+        case "$lib" in                                # every desktop has these; bundling could shadow
+            libz.so.*|libssl.so.*|libcrypto.so.*|libsqlite3.so.*|libtiff.so.*) continue ;;   # the system's copy for Qt/KIO too
+        esac
         cp -L "$src" "build/AppDir/usr/lib/$lib"
         queue="$queue $(readelf -d "$src" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"
     done
