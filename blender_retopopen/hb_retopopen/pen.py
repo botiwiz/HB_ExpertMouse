@@ -25,7 +25,7 @@ CONFORM_ITEMS = (('SURFACE', "Surface", "Snap the patch onto the surfaces undern
 
 def _patch_props():
     return dict(
-        resolution=IntProperty(name="Resolution", default=8, min=1, max=200,
+        resolution=IntProperty(name="Resolution", default=4, min=1, max=200,
                                description="Segments along the longer sides (mouse wheel)"),
         density_mode=EnumProperty(name="Density", items=DENSITY_ITEMS, default='SEGMENTS'),
         edge_length=FloatProperty(name="Edge Length", default=0.1, min=1e-5, subtype='DISTANCE', unit='LENGTH',
@@ -57,7 +57,9 @@ def _patch_props():
 
 
 def _settings_props():
+    from .brushprops import brush_props
     d = _patch_props()
+    d.update(brush_props())
     d["snap_px"] = IntProperty(name="Snap Radius", default=14, min=2, max=100, subtype='PIXEL',
                                description="Snap to existing retopo vertices and close the loop within this distance")
     return d

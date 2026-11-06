@@ -6,17 +6,19 @@ bl_info = {
     "author": "Boti Harko",
     "version": (1, 0, 0),
     "blender": (4, 2, 0),
-    "location": "3D View > Toolbar > Retopo Pen",
+    "location": "3D View > Toolbar > Retopo Pen / Retopo Brush",
     "description": "Draw a closed outline on the surface (snaps to any visible meshes) and get a quad patch",
     "category": "Mesh",
 }
 
-from . import pen
+from . import brush, pen
 
 
 def register():
     pen.register()
+    brush.register()
 
 
 def unregister():
+    brush.unregister()
     pen.unregister()

@@ -1,6 +1,7 @@
 # HB_RetopoPen for Blender
 
-Draw the outline of a patch on the surface and get a clean quad patch — retopology by drawing.
+Draw the outline of a patch on the surface and get a clean quad patch — retopology by drawing —
+then relax and tweak it with the Retopo Brush. Patches start light (Resolution 4).
 
 ![patches on a sphere and a cube](preview.png)
 
@@ -45,6 +46,21 @@ A panel in the viewport lists everything, live:
 After keeping, the redo panel (bottom-left) has all of these too, and the Tool Settings bar holds
 the defaults (⚙ for the full list, plus *Snap Radius*).
 
+## Retopo Brush — relax and tweak afterwards
+The **Retopo Brush** tool (next to the pen) reshapes the retopo mesh; everything it touches stays
+on the surface.
+
+| Action | Result |
+|---|---|
+| **Drag** | Tweak: grab the vertices under the brush and move them with the mouse (falloff to the edge) |
+| **Shift + drag** | Relax: even out the vertices under the brush |
+| **[ / ]** | Brush radius · **Esc / right-click** while tweaking: cancel |
+
+Tool Settings: mode (which one plain drag does), radius, strength, falloff, *Pin Border* (border
+vertices stay put; otherwise relax slides them along the border — sharp corners always stay) and
+*Front Faces Only*.
+
+## Patch layout
 - **4 corners**: a grid (each pair of opposite sides gets its own count).
   **Any other number**: one quad region per corner around a centre pole — all quads.
 - **Edges follow the surface too**: *Subdivision* splits every edge (keeping the layout and its

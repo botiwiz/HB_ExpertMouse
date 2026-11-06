@@ -18,7 +18,7 @@ from mathutils import Vector
 
 class Params:
     """Patch settings (same names as the operator / tool properties)."""
-    resolution = 8
+    resolution = 4
     density_mode = 'SEGMENTS'
     edge_length = 0.1
     relax = 3
