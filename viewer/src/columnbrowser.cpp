@@ -1,10 +1,10 @@
 #include "columnbrowser.h"
 #include "decode.h"
+#include "previewpane.h"
 #include <KDirLister>
 #include <KDirModel>
 #include <KDirSortFilterProxyModel>
 #include <KFilePreviewGenerator>
-#include <KIO/PreviewJob>
 #include <QDir>
 #include <QIcon>
 #include <QCoreApplication>
@@ -22,11 +22,6 @@ QAbstractItemView* CascadeView::createColumn(const QModelIndex& root) {
     return col;
 }
 
-static QString humanSize(double b) {
-    const char* u[] = {"B", "KB", "MB", "GB", "TB"}; int k = 0;
-    while (b >= 1024 && k < 4) { b /= 1024; k++; }
-    return k ? QString::number(b, 'f', 1) + " " + u[k] : QString::number((qint64)b) + " B";
-}
 
 ColumnBrowser::ColumnBrowser(QWidget* parent) : QWidget(parent) {
     auto* lay = new QVBoxLayout(this);
@@ -52,18 +47,8 @@ ColumnBrowser::ColumnBrowser(QWidget* parent) : QWidget(parent) {
     gen_->setPreviewShown(true);
 
     // preview column for the selected file
-    pane_ = new QWidget;
+    pane_ = new PreviewPane;
     pane_->setMinimumWidth(320);
-    auto* pl = new QVBoxLayout(pane_);
-    paneImage_ = new QLabel;
-    paneImage_->setAlignment(Qt::AlignCenter);
-    paneImage_->setMinimumSize(300, 300);
-    paneInfo_ = new QLabel;
-    paneInfo_->setWordWrap(true);
-    paneInfo_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    paneInfo_->setAlignment(Qt::AlignTop | Qt::AlignHCenter);
-    pl->addWidget(paneImage_);
-    pl->addWidget(paneInfo_, 1);
     view_->setPreviewWidget(pane_);
 
     connect(view_, &QColumnView::updatePreviewWidget, this, &ColumnBrowser::showPreview);
@@ -149,36 +134,4 @@ void ColumnBrowser::setShowHidden(bool on) {
     model_->dirLister()->emitChanges();
 }
 
-void ColumnBrowser::showPreview(const QModelIndex& i) {
-    KFileItem it = itemAt(i);
-    int gen = ++previewGen_;
-    paneImage_->setPixmap(QIcon::fromTheme(it.iconName()).pixmap(128, 128));
-    QString info = "<b>" + it.text().toHtmlEscaped() + "</b><br>" + it.mimeComment().toHtmlEscaped() +
-                   "<br>" + humanSize((double)it.size()) +
-                   "<br>" + it.time(KFileItem::ModificationTime).toString("yyyy-MM-dd HH:mm");
-    paneInfo_->setText(info);
-    if (it.isNull() || it.isDir()) return;
-    QPointer<ColumnBrowser> self(this);
-    std::string ext = lower_ext(it.name().toStdString());
-    if (it.isLocalFile() && is_image_ext(ext)) {
-        // our decoder: instant even for multi-GB PSD/PSB
-        std::string path = it.localPath().toStdString();
-        std::thread([self, gen, path, info] {
-            std::shared_ptr<LoadResult> r(load_preview(path, 600000).release());
-            QMetaObject::invokeMethod(qApp, [self, gen, r, info] {
-                if (!self || gen != self->previewGen_ || !r->img) return;
-                QImage q = qimage_from_image(r->img.get());
-                self->paneImage_->setPixmap(QPixmap::fromImage(q.scaled(300, 300, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
-                self->paneInfo_->setText(info + QString("<br>%1 x %2").arg(r->info.orig_w).arg(r->info.orig_h) +
-                                         (r->info.format.empty() ? QString() : "  " + QString::fromStdString(r->info.format)));
-            }, Qt::QueuedConnection);
-        }).detach();
-        return;
-    }
-    // everything else: the system's KIO thumbnailers (videos, PDFs, documents, fonts...)
-    auto* job = KIO::filePreview(KFileItemList{it}, QSize(300, 300));
-    job->setIgnoreMaximumSize(false);
-    connect(job, &KIO::PreviewJob::gotPreview, this, [this, gen](const KFileItem&, const QPixmap& pm) {
-        if (gen == previewGen_) paneImage_->setPixmap(pm);
-    });
-}
+void ColumnBrowser::showPreview(const QModelIndex& i) { pane_->showItem(itemAt(i)); }

@@ -8,12 +8,25 @@
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QOpenGLContext>
+#include <QOpenGLFunctions>
 #include <QTimer>
 #include <QWheelEvent>
 #include <algorithm>
 #include <exception>
 #include <filesystem>
 #include <vector>
+
+// f3d's external window first copies the bound framebuffer into its own and composites on
+// top of it (FrameBlitMode BlitToCurrent). Our FBO still holds the previous frame, which then
+// ghosts through, and renders triggered by input outside paintGL could surface stale frames.
+// So every f3d render starts from a freshly cleared framebuffer.
+void ModelView::beginGL() {
+    makeCurrent();
+    QOpenGLFunctions* f = context()->functions();
+    f->glClearColor(0.11f, 0.11f, 0.12f, 1.0f);
+    f->glClearDepthf(1.0f);
+    f->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
+}
 
 ModelView::ModelView(QWidget* parent) : QOpenGLWidget(parent) {
     setFocusPolicy(Qt::StrongFocus);
@@ -61,7 +74,7 @@ void ModelView::initializeGL() {
     tick_->setInterval(30);
     connect(tick_, &QTimer::timeout, this, [this] {
         if (!engine_ || !isVisible()) return;
-        makeCurrent();
+        beginGL();
         inter_->triggerEventLoop(1.0 / 30.0);
         doneCurrent();
         update();
@@ -90,7 +103,7 @@ void ModelView::doLoad() {
     pending_.clear();
     error_.clear();
     bool ok = true;
-    makeCurrent();
+    beginGL();
     try {
         f3d::scene& sc = engine_->getScene();
         sc.clear();
@@ -108,7 +121,7 @@ void ModelView::doLoad() {
 
 void ModelView::command(const QString& cmd) {
     if (!engine_) return;
-    makeCurrent();
+    beginGL();
     try { inter_->triggerCommand(cmd.toStdString()); } catch (...) {}
     doneCurrent();
     update();
@@ -119,6 +132,9 @@ void ModelView::resizeGL(int w, int h) {
 }
 
 void ModelView::paintGL() {
+    QOpenGLFunctions* f = context()->functions();      // already current inside paintGL
+    f->glClearColor(0.11f, 0.11f, 0.12f, 1.0f);
+    f->glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT);
     if (engine_) { try { engine_->getWindow().render(); } catch (...) {} }
 }
 
@@ -143,7 +159,7 @@ void ModelView::mousePressEvent(QMouseEvent* e) {
     if (e->button() == Qt::RightButton) { rightDown_ = true; pressPos_ = e->globalPosition().toPoint(); }
     f3d::interactor::MouseButton b;
     if (!inter_ || !mapButton(e->button(), b)) return QOpenGLWidget::mousePressEvent(e);
-    makeCurrent();
+    beginGL();
     inter_->triggerMousePosition(e->position().x(), e->position().y());
     mods(e->modifiers());
     inter_->triggerMouseButton(f3d::interactor::InputAction::PRESS, b);
@@ -153,7 +169,7 @@ void ModelView::mousePressEvent(QMouseEvent* e) {
 
 void ModelView::mouseMoveEvent(QMouseEvent* e) {
     if (!inter_) return;
-    makeCurrent();
+    beginGL();
     inter_->triggerMousePosition(e->position().x(), e->position().y());
     mods(e->modifiers());
     doneCurrent();
@@ -163,7 +179,7 @@ void ModelView::mouseMoveEvent(QMouseEvent* e) {
 void ModelView::mouseReleaseEvent(QMouseEvent* e) {
     f3d::interactor::MouseButton b;
     if (inter_ && mapButton(e->button(), b)) {
-        makeCurrent();
+        beginGL();
         inter_->triggerMousePosition(e->position().x(), e->position().y());
         mods(e->modifiers());
         inter_->triggerMouseButton(f3d::interactor::InputAction::RELEASE, b);
@@ -182,7 +198,7 @@ void ModelView::wheelEvent(QWheelEvent* e) {
     using W = f3d::interactor::WheelDirection;
     QPoint d = e->angleDelta();
     W dir = std::abs(d.y()) >= std::abs(d.x()) ? (d.y() > 0 ? W::FORWARD : W::BACKWARD) : (d.x() > 0 ? W::RIGHT : W::LEFT);
-    makeCurrent();
+    beginGL();
     mods(e->modifiers());
     inter_->triggerMouseWheel(dir);
     doneCurrent();
@@ -215,7 +231,7 @@ static std::string keySym(QKeyEvent* e) {
 
 void ModelView::keyPressEvent(QKeyEvent* e) {
     if (!inter_) return QOpenGLWidget::keyPressEvent(e);
-    makeCurrent();
+    beginGL();
     mods(e->modifiers());
     std::string ks = keySym(e);
     if (!ks.empty()) inter_->triggerKeyboardKey(f3d::interactor::InputAction::PRESS, ks);
@@ -226,7 +242,7 @@ void ModelView::keyPressEvent(QKeyEvent* e) {
 
 void ModelView::keyReleaseEvent(QKeyEvent* e) {
     if (!inter_) return QOpenGLWidget::keyReleaseEvent(e);
-    makeCurrent();
+    beginGL();
     mods(e->modifiers());
     std::string ks = keySym(e);
     if (!ks.empty()) inter_->triggerKeyboardKey(f3d::interactor::InputAction::RELEASE, ks);

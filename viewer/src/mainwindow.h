@@ -13,6 +13,7 @@
 
 class ImageView;
 class ColumnBrowser;
+class PreviewPane;
 class ModelView;
 class KUrlNavigator;
 class KFilePlacesView;
@@ -43,6 +44,7 @@ public:
     QString lastFolder() const;
     ColumnBrowser* cascade() const { return cascade_; }
     void setCascadeMode(bool on) { setCascade(on); }
+    void selftestViewModes();                     // prints which Dolphin view actions exist
     ModelView* modelView() const { return model_; }   // nullptr when built without f3d                    // browser folder from the previous session
 
 protected:
@@ -77,6 +79,8 @@ private:
     void navigateTo(const QUrl& url);
     void triggerPartAction(const char* name);
     void setCascade(bool on);
+    void setViewMode(const QString& mode);
+    void updateSidePreview();
     void clipboardCopy(bool cut);
     void clipboardPaste();
     bool cascadeActive() const { return cascadeOn_ && cascade_; }
@@ -113,7 +117,10 @@ private:
     ModelView* model_ = nullptr;
     ColumnBrowser* cascade_ = nullptr;            // cascade (column) explorer
     QStackedWidget* views_ = nullptr;             // Dolphin view | cascade
-    bool cascadeOn_ = false, syncing_ = false;                  // embedded f3d (HBV_HAVE_F3D)
+    bool cascadeOn_ = false, syncing_ = false;
+    PreviewPane* sidePreview_ = nullptr;          // right-hand preview panel (browser)
+    QString viewMode_ = "details";                // details | icons | thumbs | cascade
+    QAction* viewModeAct_ = nullptr;
     bool showingModel_ = false;
     QToolBar* tb_ = nullptr;
     QLabel *statusL_ = nullptr, *statusR_ = nullptr;

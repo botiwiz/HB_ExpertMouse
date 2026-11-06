@@ -77,6 +77,7 @@ int main(int argc, char** argv) {
             printf("dolphinpart: %s %s\n", w->dolphinLoaded() ? "LOADED" : "MISSING", w->dolphinError().toLocal8Bit().constData());
             printf("commands: %d\n", w->commandCount());
             int rc = w->dolphinLoaded() ? 0 : 3;
+            if (qEnvironmentVariableIsSet("HBV_SELFTEST_MODES")) w->selftestViewModes();
             if (qEnvironmentVariableIsSet("HBV_SELFTEST_CASCADE")) {
                 ColumnBrowser* c = w->cascade();
                 int cols = c->columnCount();

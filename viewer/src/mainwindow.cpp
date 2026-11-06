@@ -1,6 +1,7 @@
 #include "mainwindow.h"
 #include "imageview.h"
 #include "columnbrowser.h"
+#include "previewpane.h"
 #ifdef HBV_HAVE_F3D
 #include "modelview.h"
 #endif
@@ -121,6 +122,10 @@ MainWindow::MainWindow() {
     rl->addWidget(nav_);
     split->setStretchFactor(1, 1);
     split->setSizes({200, 1000});
+    sidePreview_ = new PreviewPane(split);
+    sidePreview_->setMinimumWidth(240);
+    split->setStretchFactor(2, 0);
+    split->setSizes({200, 900, 300});
     auto* bl = new QVBoxLayout(browserPage_);
     bl->setContentsMargins(0, 0, 0, 0);
     bl->addWidget(split);
@@ -145,7 +150,7 @@ MainWindow::MainWindow() {
         onOpenUrlRequest(it.targetUrl(), a);
     });
     connect(cascade_, &ColumnBrowser::selectionChanged, this, [this](const KFileItemList& l) {
-        if (cascadeActive()) { selection_ = l; updateStatus(); } });
+        if (cascadeActive()) { selection_ = l; updateStatus(); updateSidePreview(); } });
     connect(cascade_, &ColumnBrowser::contextMenu, this, [this](const QPoint& g, const KFileItemList& items) {
         KParts::NavigationExtension::ActionGroupMap groups;
         QList<QAction*> edit;
@@ -227,7 +232,7 @@ MainWindow::MainWindow() {
             cascade_->addAction(a);
         }
     rebuildToolbar();
-    if (ini_->value("browser/cascade", false).toBool()) setCascade(true);
+    setViewMode(ini_->value("browser/view_mode", ini_->value("browser/cascade", false).toBool() ? "cascade" : "details").toString());
     setAcceptDrops(true);
     stack_->setCurrentWidget(browserPage_);
     updateStatus();
@@ -265,7 +270,8 @@ void MainWindow::loadDolphin() {
                 this, [this](const QPoint& g, const KFileItemList& items, const KParts::OpenUrlArguments&,
                              KParts::NavigationExtension::PopupFlags f, const KParts::NavigationExtension::ActionGroupMap& m) {
                     browserPopup(g, items, f, m); });
-        connect(ext_, &KParts::NavigationExtension::selectionInfo, this, [this](const KFileItemList& l) { selection_ = l; updateStatus(); });
+        connect(ext_, &KParts::NavigationExtension::selectionInfo, this, [this](const KFileItemList& l) {
+            if (!cascadeActive()) { selection_ = l; updateStatus(); updateSidePreview(); } });
         connect(ext_, &KParts::NavigationExtension::setLocationBarUrl, this, [this](const QString& s) {
             QUrl u = QUrl::fromUserInput(s);
             if (u.isValid() && u != nav_->locationUrl()) nav_->setLocationUrl(u);
@@ -349,8 +355,30 @@ void MainWindow::buildCommands() {
     addCmd("go_home", "Home folder", "Browser", "go-home", {K(Qt::ALT | Qt::Key_Home)}, [this] { navigateTo(QUrl::fromLocalFile(QDir::homePath())); }, B);
     addCmd("edit_location", "Edit location", "Browser", "document-edit", {K(Qt::CTRL | Qt::Key_L)}, [this] {
         nav_->setUrlEditable(true); nav_->setFocus(); }, B);
-    addCmd("cascade", "Cascade (column) view", "Browser", "view-file-columns", {K(Qt::CTRL | Qt::Key_4), K(Qt::Key_F8)},
-           [this] { setCascade(!cascadeOn_); }, nullptr, [this] { return cascadeOn_; });
+    // view modes: Details / Icons / Thumbnails (Dolphin's view) and Cascade (columns)
+    addCmd("view_details", "View: details list", "Browser", "view-list-details", {}, [this] { setViewMode("details"); },
+           nullptr, [this] { return viewMode_ == "details"; });
+    addCmd("view_icons", "View: icons", "Browser", "view-list-icons", {}, [this] { setViewMode("icons"); },
+           nullptr, [this] { return viewMode_ == "icons"; });
+    addCmd("view_thumbs", "View: thumbnails", "Browser", "view-preview", {}, [this] { setViewMode("thumbs"); },
+           nullptr, [this] { return viewMode_ == "thumbs"; });
+    addCmd("cascade", "View: cascade (columns)", "Browser", "view-file-columns", {K(Qt::CTRL | Qt::Key_4), K(Qt::Key_F8)},
+           [this] { setViewMode(cascadeOn_ ? "details" : "cascade"); }, nullptr, [this] { return cascadeOn_; });
+    {
+        // toolbar button: click cycles the modes, the arrow opens a menu with all four
+        auto* menu = new QMenu(this);
+        for (const char* id : {"view_details", "view_icons", "view_thumbs", "cascade"})
+            for (const Command& c : cmds_) if (c.id == id) menu->addAction(c.action);
+        viewModeAct_ = addCmd("view_mode", "View mode (details / icons / thumbnails / cascade)", "Browser", "view-list-details", {},
+            [this] {
+                static const QStringList order = {"details", "icons", "thumbs", "cascade"};
+                setViewMode(order[(order.indexOf(viewMode_) + 1) % order.size()]);
+            }, nullptr);
+        viewModeAct_->setMenu(menu);
+    }
+    addCmd("preview_panel", "Preview panel", "Browser", "view-preview", {K(Qt::Key_F12)}, [this] {
+        sidePreview_->setVisible(!sidePreview_->isVisible()); updateSidePreview(); }, nullptr,
+        [this] { return sidePreview_->isVisible(); });
     {
         QWidget* C = cascade_;                          // keys that only act inside the cascade view
         addCmd("cascade_copy", "Copy", "Browser", "edit-copy", {K::Copy}, [this] { clipboardCopy(false); }, C);
@@ -670,13 +698,19 @@ void MainWindow::loadSettings() {
         if (FILE* f = fopen("/proc/meminfo", "r")) { unsigned long long kb; if (fscanf(f, "MemTotal: %llu kB", &kb) == 1) mem = kb * 1024; fclose(f); }
         budget_ = std::clamp<uint64_t>(mem / 3 / 6, 64000000ull, 2000000000ull);
     }
-    favs_ = s.value("favorites/commands", QStringList{"browser", "open", "dolphin:go_up", "prev", "next", "zoom_fit", "zoom_100",
+    favs_ = s.value("favorites/commands", QStringList{"browser", "view_mode", "preview_panel", "open", "dolphin:go_up", "prev", "next", "zoom_fit", "zoom_100",
                                                       "zoom_in", "zoom_out", "rotate_left", "rotate_right", "fullscreen", "info"}).toStringList();
     if (s.contains("window/geometry")) restoreGeometry(s.value("window/geometry").toByteArray());
     else resize(1280, 820);
     tb_->setVisible(s.value("window/toolbar", true).toBool());
     statusBar()->setVisible(s.value("window/statusbar", true).toBool());
     places_->setVisible(s.value("browser/places", true).toBool());
+    sidePreview_->setVisible(s.value("browser/preview_panel", false).toBool());
+    if (!s.value("favorites/added_view_buttons", false).toBool()) {     // existing users get the new buttons once
+        for (const char* id : {"preview_panel", "view_mode"})
+            if (!favs_.contains(id)) favs_.insert(std::min<int>(1, favs_.size()), id);
+        s.setValue("favorites/added_view_buttons", true);
+    }
 }
 
 void MainWindow::saveSettings() {
@@ -695,6 +729,8 @@ void MainWindow::saveSettings() {
     s.setValue("window/statusbar", statusBar()->isVisible());
     s.setValue("browser/places", places_->isVisible());
     s.setValue("browser/cascade", cascadeOn_);
+    s.setValue("browser/view_mode", viewMode_);
+    s.setValue("browser/preview_panel", sidePreview_->isVisible());
     if (part_ && part_->url().isValid()) s.setValue("browser/folder", part_->url().toString());
 }
 
@@ -736,6 +772,46 @@ void MainWindow::setCascade(bool on) {
         selection_.clear();
     } else views_->setCurrentIndex(0);
     updateStatus();
+}
+
+void MainWindow::setViewMode(const QString& mode) {
+    viewMode_ = mode;
+    if (mode == "cascade") setCascade(true);
+    else {
+        setCascade(false);
+        triggerPartAction(mode == "details" ? "details" : "icons");
+        // thumbnails = Dolphin's "Show Previews" toggle on; plain icons/details = off
+        if (part_)
+            if (QAction* sp = part_->actionCollection()->action(QStringLiteral("show_preview")); sp && sp->isCheckable())
+                if (sp->isChecked() != (mode == "thumbs")) sp->trigger();
+    }
+    static const QMap<QString, QString> icons = {{"details", "view-list-details"}, {"icons", "view-list-icons"},
+                                                 {"thumbs", "view-preview"}, {"cascade", "view-file-columns"}};
+    if (viewModeAct_) viewModeAct_->setIcon(QIcon::fromTheme(icons.value(mode, "view-list-details")));
+    for (const Command& c : cmds_)
+        if (c.id == "view_details" || c.id == "view_icons" || c.id == "view_thumbs" || c.id == "cascade")
+            c.action->setChecked((c.id == "view_details" && mode == "details") || (c.id == "view_icons" && mode == "icons") ||
+                                 (c.id == "view_thumbs" && mode == "thumbs") || (c.id == "cascade" && mode == "cascade"));
+    updateSidePreview();
+    saveSettings();
+}
+
+void MainWindow::updateSidePreview() {
+    if (!sidePreview_ || !sidePreview_->isVisible()) return;
+    if (selection_.isEmpty()) sidePreview_->clearItem();
+    else if (sidePreview_->item().url() != selection_.first().url()) sidePreview_->showItem(selection_.first());
+}
+
+void MainWindow::selftestViewModes() {
+    for (const char* n : {"icons", "compact", "details", "show_preview", "view_zoom_in"})
+        printf("dolphin action %s: %s\n", n, part_ && part_->actionCollection()->action(QString::fromLatin1(n)) ? "yes" : "NO");
+    for (const char* m : {"thumbs", "icons", "details", "cascade"}) {
+        setViewMode(m);
+        printf("view mode %s -> cascade=%d\n", m, (int)cascadeOn_);
+    }
+    sidePreview_->setVisible(true);
+    printf("preview panel visible=%d\n", (int)sidePreview_->isVisible());
+    fflush(stdout);
 }
 
 void MainWindow::clipboardCopy(bool cut) {

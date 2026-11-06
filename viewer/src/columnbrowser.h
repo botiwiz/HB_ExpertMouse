@@ -10,7 +10,7 @@
 class KDirModel;
 class KDirSortFilterProxyModel;
 class KFilePreviewGenerator;
-class QLabel;
+class PreviewPane;
 
 class CascadeView : public QColumnView {          // gives every column our context menu
     Q_OBJECT
@@ -50,9 +50,7 @@ private:
     KDirModel* model_;
     KDirSortFilterProxyModel* proxy_;
     KFilePreviewGenerator* gen_;
-    QWidget* pane_;
-    QLabel *paneImage_, *paneInfo_;
+    PreviewPane* pane_;
     QUrl root_, folder_, target_;
     bool hidden_ = false;
-    int previewGen_ = 0;
 };

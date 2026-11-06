@@ -40,6 +40,7 @@ protected:
 
 private:
     void doLoad();
+    void beginGL();                        // make current + clear (see .cpp)
     void mods(Qt::KeyboardModifiers m);
 
     std::unique_ptr<f3d::engine> engine_;
