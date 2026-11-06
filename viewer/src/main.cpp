@@ -1,6 +1,7 @@
 // HB Viewer - image viewer for huge PSD/PSB and common formats, with Dolphin (KDE) as its
 // file browser. Pictures open in our viewer; any other file behaves exactly as in Dolphin.
 #include "cli.h"
+#include "columnbrowser.h"
 #include "mainwindow.h"
 #ifdef HBV_HAVE_F3D
 #include "modelview.h"
@@ -69,12 +70,20 @@ int main(int argc, char** argv) {
     // --selftest <folder> <screenshot.png>: load Dolphin, show the folder, report, save a screenshot
     if (argc > 3 && !strcmp(argv[1], "--selftest")) {
         w->resize(1200, 800);
+        if (qEnvironmentVariableIsSet("HBV_SELFTEST_CASCADE")) w->setCascadeMode(true);
         w->openPath(QString::fromLocal8Bit(argv[2]));
         QString shot = QString::fromLocal8Bit(argv[3]);
         QTimer::singleShot(6000, w, [w, shot] {
             printf("dolphinpart: %s %s\n", w->dolphinLoaded() ? "LOADED" : "MISSING", w->dolphinError().toLocal8Bit().constData());
             printf("commands: %d\n", w->commandCount());
             int rc = w->dolphinLoaded() ? 0 : 3;
+            if (qEnvironmentVariableIsSet("HBV_SELFTEST_CASCADE")) {
+                ColumnBrowser* c = w->cascade();
+                int cols = c->columnCount();
+                printf("cascade: columns=%d folder=%s selected=%lld\n", cols, c->url().toDisplayString().toLocal8Bit().constData(),
+                       (long long)c->selectedItems().size());
+                if (cols < 2) rc = 5;
+            }
 #ifdef HBV_HAVE_F3D
             printf("f3d: %s\n", ModelView::f3dVersion().toLocal8Bit().constData());
             if (ModelView* m = w->modelView(); m && !m->path().isEmpty()) {

@@ -36,7 +36,7 @@ list(APPEND CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
 find_package(Qt6 REQUIRED COMPONENTS Widgets)
 find_package(KF6 REQUIRED COMPONENTS CoreAddons Parts KIO XmlGui ColorScheme ConfigWidgets)
 
-add_executable(hb_viewer src/main.cpp src/mainwindow.cpp src/imageview.cpp)
+add_executable(hb_viewer src/main.cpp src/mainwindow.cpp src/imageview.cpp src/columnbrowser.cpp)
 target_link_libraries(hb_viewer hbcore Qt6::Widgets
   KF6::CoreAddons KF6::Parts KF6::KIOCore KF6::KIOGui KF6::KIOWidgets KF6::KIOFileWidgets
   KF6::XmlGui KF6::ColorScheme KF6::ConfigWidgets)

@@ -12,6 +12,7 @@
 #include <memory>
 
 class ImageView;
+class ColumnBrowser;
 class ModelView;
 class KUrlNavigator;
 class KFilePlacesView;
@@ -40,6 +41,8 @@ public:
     int commandCount() const { return cmds_.size(); }
     QString dolphinError() const { return partError_; }
     QString lastFolder() const;
+    ColumnBrowser* cascade() const { return cascade_; }
+    void setCascadeMode(bool on) { setCascade(on); }
     ModelView* modelView() const { return model_; }   // nullptr when built without f3d                    // browser folder from the previous session
 
 protected:
@@ -73,6 +76,10 @@ private:
     void onOpenUrlRequest(const QUrl& url, const KParts::OpenUrlArguments& args);
     void navigateTo(const QUrl& url);
     void triggerPartAction(const char* name);
+    void setCascade(bool on);
+    void clipboardCopy(bool cut);
+    void clipboardPaste();
+    bool cascadeActive() const { return cascadeOn_ && cascade_; }
 
     // viewer
     void setViewerMode(bool viewer);
@@ -103,7 +110,10 @@ private:
     QStackedWidget* stack_ = nullptr;
     QWidget* browserPage_ = nullptr;
     ImageView* view_ = nullptr;
-    ModelView* model_ = nullptr;                  // embedded f3d (HBV_HAVE_F3D)
+    ModelView* model_ = nullptr;
+    ColumnBrowser* cascade_ = nullptr;            // cascade (column) explorer
+    QStackedWidget* views_ = nullptr;             // Dolphin view | cascade
+    bool cascadeOn_ = false, syncing_ = false;                  // embedded f3d (HBV_HAVE_F3D)
     bool showingModel_ = false;
     QToolBar* tb_ = nullptr;
     QLabel *statusL_ = nullptr, *statusR_ = nullptr;

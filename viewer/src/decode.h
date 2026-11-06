@@ -19,6 +19,10 @@ struct LoadResult {
 std::unique_ptr<LoadResult> load_image(const std::string& path, uint64_t budget_px, LoadCtl& ctl,
                                        const std::function<void(std::unique_ptr<LoadResult>)>& on_preview = nullptr);
 
+// Quick preview for file browsers: at most ~max_px pixels, as fast as possible
+// (row-sampled PSD/PSB, embedded RAW JPEG, scaled decode for the rest). Thread-safe.
+std::unique_ptr<LoadResult> load_preview(const std::string& path, uint64_t max_px);
+
 // PSD / PSB (Photoshop) merged-composite decoder. Returns false + r.error on failure.
 bool load_psd(const uint8_t* data, size_t len, uint64_t budget_px, LoadCtl& ctl, LoadResult& r, bool fast = false);
 

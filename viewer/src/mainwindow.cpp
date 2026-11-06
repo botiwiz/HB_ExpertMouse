@@ -1,5 +1,6 @@
 #include "mainwindow.h"
 #include "imageview.h"
+#include "columnbrowser.h"
 #ifdef HBV_HAVE_F3D
 #include "modelview.h"
 #endif
@@ -14,6 +15,8 @@
 #include <KIO/JobUiDelegateFactory>
 #include <KIO/OpenFileManagerWindowJob>
 #include <KIO/OpenUrlJob>
+#include <KIO/Paste>
+#include <KUrlMimeData>
 #include <KIO/RenameFileDialog>
 #include <KParts/OpenUrlArguments>
 #include <KParts/PartLoader>
@@ -37,6 +40,7 @@
 #include <QListWidget>
 #include <QMenu>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QMimeDatabase>
 #include <QMouseEvent>
 #include <QPainter>
@@ -123,16 +127,42 @@ MainWindow::MainWindow() {
     stack_->addWidget(browserPage_);
 
     loadDolphin();
-    if (part_) rl->addWidget(part_->widget(), 1);
+    views_ = new QStackedWidget(right);
+    rl->addWidget(views_, 1);
+    if (part_) views_->addWidget(part_->widget());
     else {
         auto* l = new QLabel("Dolphin's browser component could not be loaded.\n" + partError_ +
-                             "\n\nInstall the 'dolphin' package (Plasma 6). The image viewer still works.", right);
+                             "\n\nInstall the 'dolphin' package (Plasma 6). The image viewer and the cascade view still work.");
         l->setAlignment(Qt::AlignCenter);
         l->setWordWrap(true);
-        rl->addWidget(l, 1);
+        views_->addWidget(l);
     }
+    cascade_ = new ColumnBrowser;
+    views_->addWidget(cascade_);
+    connect(cascade_, &ColumnBrowser::activated, this, [this](const KFileItem& it) {
+        KParts::OpenUrlArguments a;
+        a.setMimeType(it.mimetype());
+        onOpenUrlRequest(it.targetUrl(), a);
+    });
+    connect(cascade_, &ColumnBrowser::selectionChanged, this, [this](const KFileItemList& l) {
+        if (cascadeActive()) { selection_ = l; updateStatus(); } });
+    connect(cascade_, &ColumnBrowser::contextMenu, this, [this](const QPoint& g, const KFileItemList& items) {
+        KParts::NavigationExtension::ActionGroupMap groups;
+        QList<QAction*> edit;
+        for (const char* id : {"cascade_cut", "cascade_copy", "cascade_paste", "rename", "trash"})
+            for (const Command& c : cmds_) if (c.id == id) edit << c.action;
+        groups.insert("editactions", edit);
+        browserPopup(g, items, {}, groups);
+    });
+    connect(cascade_, &ColumnBrowser::folderChanged, this, [this](const QUrl& f) {
+        if (!cascadeActive()) return;
+        syncing_ = true;
+        nav_->setLocationUrl(f);                       // breadcrumb + Places follow the columns
+        syncing_ = false;
+    });
     connect(nav_, &KUrlNavigator::urlChanged, this, [this](const QUrl& u) {
         if (part_ && part_->url().adjusted(QUrl::StripTrailingSlash) != u.adjusted(QUrl::StripTrailingSlash)) part_->openUrl(u);
+        if (cascadeActive() && !syncing_) cascade_->setUrl(u);
         places_->setUrl(u);
         updateTitle();
     });
@@ -187,7 +217,17 @@ MainWindow::MainWindow() {
     loadSettings();
     buildCommands();
     addDolphinCommands();
+    // Alt+Up inside the cascade, unless go_up still owns it window-wide (ambiguous otherwise)
+    for (const Command& c : cmds_)
+        if (c.id == "go_up" && !c.action->shortcuts().contains(QKeySequence(Qt::ALT | Qt::Key_Up))) {
+            auto* a = new QAction(this);
+            a->setShortcut(QKeySequence(Qt::ALT | Qt::Key_Up));
+            a->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+            connect(a, &QAction::triggered, this, [this] { nav_->goUp(); });
+            cascade_->addAction(a);
+        }
     rebuildToolbar();
+    if (ini_->value("browser/cascade", false).toBool()) setCascade(true);
     setAcceptDrops(true);
     stack_->setCurrentWidget(browserPage_);
     updateStatus();
@@ -309,6 +349,30 @@ void MainWindow::buildCommands() {
     addCmd("go_home", "Home folder", "Browser", "go-home", {K(Qt::ALT | Qt::Key_Home)}, [this] { navigateTo(QUrl::fromLocalFile(QDir::homePath())); }, B);
     addCmd("edit_location", "Edit location", "Browser", "document-edit", {K(Qt::CTRL | Qt::Key_L)}, [this] {
         nav_->setUrlEditable(true); nav_->setFocus(); }, B);
+    addCmd("cascade", "Cascade (column) view", "Browser", "view-file-columns", {K(Qt::CTRL | Qt::Key_4), K(Qt::Key_F8)},
+           [this] { setCascade(!cascadeOn_); }, nullptr, [this] { return cascadeOn_; });
+    {
+        QWidget* C = cascade_;                          // keys that only act inside the cascade view
+        addCmd("cascade_copy", "Copy", "Browser", "edit-copy", {K::Copy}, [this] { clipboardCopy(false); }, C);
+        addCmd("cascade_cut", "Cut", "Browser", "edit-cut", {K::Cut}, [this] { clipboardCopy(true); }, C);
+        addCmd("cascade_paste", "Paste", "Browser", "edit-paste", {K::Paste}, [this] { clipboardPaste(); }, C);
+        addCmd("cascade_hidden", "Cascade: show hidden files", "Browser", "view-hidden", {K(Qt::CTRL | Qt::Key_H)},
+               [this] { cascade_->setShowHidden(!cascade_->showHidden()); }, C, [this] { return cascade_->showHidden(); });
+        auto scoped = [this, C](const QString& id, const QList<QKeySequence>& keys) {
+            for (const Command& c : cmds_)
+                if (c.id == id) {
+                    auto* a = new QAction(this);
+                    a->setShortcuts(keys);
+                    a->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+                    QAction* real = c.action;
+                    connect(a, &QAction::triggered, real, &QAction::trigger);
+                    C->addAction(a);
+                }
+        };
+        scoped("rename", {K(Qt::Key_F2)});
+        scoped("trash", {K(Qt::Key_Delete)});
+        scoped("info", {K(Qt::ALT | Qt::Key_Return)});
+    }
     addCmd("places", "Show Places panel", "Browser", "compass", {K(Qt::Key_F9)}, [this] { places_->setVisible(!places_->isVisible()); },
            nullptr, [this] { return places_->isVisible(); });
     // View
@@ -415,7 +479,7 @@ void MainWindow::addDolphinCommands() {
     QSet<QKeySequence> partKeys;
     for (QAction* a : part_->actionCollection()->actions()) for (const QKeySequence& k : a->shortcuts()) partKeys.insert(k);
     for (const Command& c : cmds_) {
-        if (view_->actions().contains(c.action)) continue;              // viewer-only scope: no conflict
+        if (view_->actions().contains(c.action) || cascade_->actions().contains(c.action)) continue;   // own scope: no conflict
         QList<QKeySequence> keep;
         for (const QKeySequence& k : c.action->shortcuts()) if (!partKeys.contains(k)) keep.append(k);
         c.action->setShortcuts(keep);
@@ -630,6 +694,7 @@ void MainWindow::saveSettings() {
     s.setValue("window/toolbar", tb_->isVisible());
     s.setValue("window/statusbar", statusBar()->isVisible());
     s.setValue("browser/places", places_->isVisible());
+    s.setValue("browser/cascade", cascadeOn_);
     if (part_ && part_->url().isValid()) s.setValue("browser/folder", part_->url().toString());
 }
 
@@ -654,7 +719,42 @@ void MainWindow::showBrowser(const QUrl& folder, const QUrl& select) {
     // ask Dolphin to select the file we came from (DolphinPart slot; harmless if missing)
     if (part_ && select.isValid())
         QMetaObject::invokeMethod(part_, "setFilesToSelect", Qt::QueuedConnection, Q_ARG(QList<QUrl>, QList<QUrl>{select}));
-    if (part_) part_->widget()->setFocus();
+    if (cascadeActive()) { cascade_->setUrl(folder.isValid() ? folder : nav_->locationUrl(), select); cascade_->view()->setFocus(); }
+    else if (part_) part_->widget()->setFocus();
+}
+
+void MainWindow::setCascade(bool on) {
+    cascadeOn_ = on;
+    if (on) {
+        views_->setCurrentWidget(cascade_);
+        cascade_->setUrl(nav_->locationUrl());
+        cascade_->view()->setFocus();
+        selection_ = cascade_->selectedItems();
+    } else if (part_) {
+        views_->setCurrentWidget(part_->widget());
+        part_->widget()->setFocus();
+        selection_.clear();
+    } else views_->setCurrentIndex(0);
+    updateStatus();
+}
+
+void MainWindow::clipboardCopy(bool cut) {
+    QList<QUrl> urls = selection_.urlList();
+    if (urls.isEmpty()) return;
+    auto* md = new QMimeData;
+    QList<QUrl> local;
+    for (const KFileItem& it : selection_) local << it.mostLocalUrl();
+    KUrlMimeData::setUrls(urls, local, md);
+    KIO::setClipboardDataCut(md, cut);
+    QApplication::clipboard()->setMimeData(md);
+}
+
+void MainWindow::clipboardPaste() {
+    QUrl dest = cascade_->url();
+    if (selection_.size() == 1 && selection_.first().isDir()) dest = selection_.first().url();
+    if (!dest.isValid()) return;
+    KIO::Job* job = KIO::paste(QApplication::clipboard()->mimeData(), dest);
+    if (job) job->setUiDelegate(KIO::createDefaultJobUiDelegate(KJobUiDelegate::AutoHandlingEnabled, this));
 }
 
 // Activation in Dolphin: folders navigate, pictures/3D open in our viewer,
@@ -682,7 +782,8 @@ void MainWindow::setViewerMode(bool viewer) {
     else {
         slideshow_->stop();
         stack_->setCurrentWidget(browserPage_);
-        if (part_) part_->widget()->setFocus();
+        if (cascadeActive()) cascade_->view()->setFocus();
+        else if (part_) part_->widget()->setFocus();
     }
     for (const Command& c : cmds_) if (c.id == "browser") c.action->setChecked(!viewer);
     updateTitle();
@@ -825,14 +926,14 @@ void MainWindow::updateTitle() {
 void MainWindow::updateStatus() {
     QString l, r;
     if (!viewer_) {
-        l = partStatus_;
+        l = cascadeActive() ? QString() : partStatus_;
         if (selection_.size() == 1) {
             const KFileItem& it = selection_.first();
             l = it.text() + (it.isDir() ? QString() : "   " + humanSize((double)it.size())) + "   " +
                 it.time(KFileItem::ModificationTime).toString("yyyy-MM-dd HH:mm") + "   " + it.mimeComment();
         }
         statusL_->setText(l);
-        statusR_->setText(part_ ? QString() : "Dolphin not available");
+        statusR_->setText(cascadeActive() ? QStringLiteral("Cascade view") : part_ ? QString() : QStringLiteral("Dolphin not available"));
         return;
     }
     if (!files_.isEmpty() && idx_ >= 0) l = QString("%1/%2   %3").arg(idx_ + 1).arg(files_.size()).arg(QFileInfo(want_).fileName());

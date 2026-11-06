@@ -198,3 +198,21 @@ std::unique_ptr<LoadResult> load_image(const std::string& path, uint64_t budget,
     ctl.progress = 1000;
     return r;
 }
+
+std::unique_ptr<LoadResult> load_preview(const std::string& path, uint64_t max_px) {
+    std::string ext = lower_ext(path);
+    LoadCtl ctl;
+    if (ext == "psd" || ext == "psb" || kRaw.count(ext)) {
+        auto r = std::make_unique<LoadResult>();
+        QFile f(QString::fromStdString(path));
+        if (!f.open(QIODevice::ReadOnly) || f.size() < 26) { r->error = "cannot open"; return r; }
+        const uint8_t* d = f.map(0, f.size());
+        if (!d) { r->error = "cannot map file"; return r; }
+        size_t n = (size_t)f.size();
+        if (!memcmp(d, "8BPS", 4)) load_psd(d, n, max_px, ctl, *r, true);
+        else load_raw_preview(d, n, *r);
+        if (r->img) r->error.clear();
+        return r;
+    }
+    return load_image(path, max_px, ctl);   // QImageReader uses setScaledSize (JPEG decodes scaled)
+}
