@@ -12,6 +12,7 @@
 #include <memory>
 
 class ImageView;
+class ModelView;
 class KUrlNavigator;
 class KFilePlacesView;
 class QLabel;
@@ -38,7 +39,8 @@ public:
     bool dolphinLoaded() const { return part_ != nullptr; }
     int commandCount() const { return cmds_.size(); }
     QString dolphinError() const { return partError_; }
-    QString lastFolder() const;                    // browser folder from the previous session
+    QString lastFolder() const;
+    ModelView* modelView() const { return model_; }   // nullptr when built without f3d                    // browser folder from the previous session
 
 protected:
     void closeEvent(QCloseEvent*) override;
@@ -101,6 +103,8 @@ private:
     QStackedWidget* stack_ = nullptr;
     QWidget* browserPage_ = nullptr;
     ImageView* view_ = nullptr;
+    ModelView* model_ = nullptr;                  // embedded f3d (HBV_HAVE_F3D)
+    bool showingModel_ = false;
     QToolBar* tb_ = nullptr;
     QLabel *statusL_ = nullptr, *statusR_ = nullptr;
     KUrlNavigator* nav_ = nullptr;

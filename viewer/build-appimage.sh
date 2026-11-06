@@ -2,15 +2,24 @@
 # Builds HB_Viewer-<arch>.AppImage.
 # Needs: cmake, g++, extra-cmake-modules, Qt6 and KDE Frameworks 6 dev packages, curl.
 # Qt6, KF6 and Dolphin are NOT bundled: the app embeds the system's Dolphin, so it runs on a
-# Plasma 6 desktop (or anywhere with the 'dolphin' package installed) and stays tiny.
+# Plasma 6 desktop (or anywhere with the 'dolphin' package installed).
+# Optional: F3D_SDK=<extracted f3d release> embeds the f3d 3D viewer; libf3d (with its VTK)
+# and f3d's plugins are bundled in usr/lib.
 set -e
 cd "$(dirname "$0")"
 ARCH="${ARCH:-$(uname -m)}"
-cmake -S . -B build/app -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build/app -DCMAKE_BUILD_TYPE=Release ${F3D_SDK:+-DCMAKE_PREFIX_PATH="$F3D_SDK"}
 cmake --build build/app -j"$(nproc)"
 strip build/app/hb_viewer
 rm -rf build/AppDir && mkdir -p build/AppDir/usr/bin
 cp build/app/hb_viewer build/AppDir/usr/bin/
+if [ -n "$F3D_SDK" ]; then
+    mkdir -p build/AppDir/usr/lib
+    # libf3d + plugins (+ any private libs shipped next to them)
+    find "$F3D_SDK/lib" -maxdepth 2 -name '*.so*' -exec cp -a {} build/AppDir/usr/lib/ \;
+    [ -d "$F3D_SDK/share/f3d" ] && mkdir -p build/AppDir/usr/share && cp -a "$F3D_SDK/share/f3d" build/AppDir/usr/share/
+    ls -la build/AppDir/usr/lib
+fi
 cp appdir/AppRun appdir/hb_viewer.desktop appdir/hb_viewer.png build/AppDir/
 chmod +x build/AppDir/AppRun
 ln -sf hb_viewer.png build/AppDir/.DirIcon

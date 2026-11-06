@@ -1,5 +1,8 @@
 #include "mainwindow.h"
 #include "imageview.h"
+#ifdef HBV_HAVE_F3D
+#include "modelview.h"
+#endif
 
 #include <KActionCollection>
 #include <KFileItemActions>
@@ -141,6 +144,12 @@ MainWindow::MainWindow() {
     connect(view_, &ImageView::navigate, this, [this](int d) { go(d); });
     connect(view_, &ImageView::contextMenuRequested, this, &MainWindow::showCommandMenu);
     connect(view_, &ImageView::doubleClicked, this, &MainWindow::toggleFullscreen);
+#ifdef HBV_HAVE_F3D
+    model_ = new ModelView;
+    stack_->addWidget(model_);
+    connect(model_, &ModelView::contextMenuRequested, this, &MainWindow::showCommandMenu);
+    connect(model_, &ModelView::loaded, this, [this](bool) { updateStatus(); });
+#endif
 
     tb_ = addToolBar("Favorites");
     tb_->setObjectName("favorites");
@@ -335,7 +344,43 @@ void MainWindow::buildCommands() {
     addCmd("flip_v", "Flip vertical", "Image", "object-flip-vertical", {K(Qt::Key_V)}, [this] { view_->flipV(); }, V);
     addCmd("reset_transform", "Reset rotation / flip", "Image", "edit-undo", {K(Qt::CTRL | Qt::Key_R)}, [this] { view_->resetTransform(); }, V);
     // 3D
-    addCmd("f3d", "Open in f3d (3D viewer)", "3D", "draw-cuboid", {K(Qt::Key_D)}, [this] { cmdF3d(); }, V);
+    addCmd("f3d", "Open in f3d app (external window)", "3D", "draw-cuboid", {K(Qt::Key_D)}, [this] { cmdF3d(); }, V);
+#ifdef HBV_HAVE_F3D
+    {
+        QWidget* M = model_;                         // 3D-view scope; other keys go to f3d itself
+        auto f3dCmd = [this](const QString& id, const QString& label, const QString& icon, const QString& cmd) {
+            addCmd(id, label, "3D", icon, {}, [this, cmd] { if (model_) model_->command(cmd); }, nullptr);
+        };
+        f3dCmd("f3d_reset", "Reset camera", "zoom-fit-best", "reset_camera");
+        f3dCmd("f3d_front", "View: front", "go-down", "set_camera front");
+        f3dCmd("f3d_top", "View: top", "go-top", "set_camera top");
+        f3dCmd("f3d_right", "View: right", "go-next", "set_camera right");
+        f3dCmd("f3d_iso", "View: isometric", "draw-cuboid", "set_camera isometric");
+        f3dCmd("f3d_grid", "Toggle grid", "view-grid", "toggle render.grid.enable");
+        f3dCmd("f3d_edges", "Toggle edges (wireframe overlay)", "draw-polyline", "toggle render.show_edges");
+        f3dCmd("f3d_axis", "Toggle axis widget", "transform-move", "toggle ui.axis");
+        f3dCmd("f3d_ortho", "Toggle orthographic camera", "draw-rectangle", "toggle scene.camera.orthographic");
+        f3dCmd("f3d_anim", "Play / pause animation", "media-playback-start", "toggle_animation");
+        f3dCmd("f3d_fps", "Toggle FPS counter", "speedometer", "toggle ui.fps");
+        f3dCmd("f3d_metadata", "Toggle model info", "documentinfo", "toggle ui.metadata");
+        f3dCmd("f3d_cheatsheet", "f3d keyboard cheatsheet", "help-keybord-shortcuts", "toggle ui.cheatsheet");
+        // keys of ours that must win inside the 3D view
+        for (const Command& c : cmds_) {
+            auto scoped = [&](const QList<QKeySequence>& keys) {
+                auto* a = new QAction(this);
+                a->setShortcuts(keys);
+                a->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+                QAction* real = c.action;
+                connect(a, &QAction::triggered, real, &QAction::trigger);
+                M->addAction(a);
+            };
+            if (c.id == "next") scoped({K(Qt::Key_PageDown), K(Qt::Key_Right)});
+            else if (c.id == "prev") scoped({K(Qt::Key_PageUp), K(Qt::Key_Left)});
+            else if (c.id == "back_browser") scoped({K(Qt::Key_Escape)});
+            else if (c.id == "f3d") scoped({K(Qt::CTRL | Qt::Key_D)});
+        }
+    }
+#endif
     // single-key extras that only make sense in the viewer (Dolphin needs these keys for typing)
     auto alias = [this](const QString& id, const QList<QKeySequence>& keys) {
         for (const Command& c : cmds_)
@@ -628,7 +673,11 @@ void MainWindow::onOpenUrlRequest(const QUrl& url, const KParts::OpenUrlArgument
 // ---------------------------------------------------------------- viewer
 void MainWindow::setViewerMode(bool viewer) {
     viewer_ = viewer;
-    if (viewer) { stack_->setCurrentWidget(view_); view_->setFocus(); }
+    if (viewer) {
+        QWidget* page = showingModel_ && model_ ? (QWidget*)model_ : (QWidget*)view_;
+        stack_->setCurrentWidget(page);
+        page->setFocus();
+    }
     else {
         slideshow_->stop();
         stack_->setCurrentWidget(browserPage_);
@@ -675,9 +724,23 @@ void MainWindow::openInViewer(const QString& path) {
     if (is_3d_ext(lower_ext(path.toStdString()))) {
         view_->clear();
         curPath_ = path;
-        view_->setMessage("3D model: " + QFileInfo(path).fileName() + "\nPress D to open it in f3d.\n(Embedded 3D view is the next step.)");
+        if (model_) {                                   // embedded f3d
+            showingModel_ = true;
+            if (viewer_) { stack_->setCurrentWidget((QWidget*)model_); ((QWidget*)model_)->setFocus(); }
+#ifdef HBV_HAVE_F3D
+            model_->load(path);
+#endif
+        } else
+            view_->setMessage("3D model: " + QFileInfo(path).fileName() + "\nPress D to open it in f3d.\n(This build has no embedded 3D viewer.)");
         updateTitle(); updateStatus();
         return;
+    }
+    if (showingModel_) {                                // back to pictures: free the GPU scene
+        showingModel_ = false;
+#ifdef HBV_HAVE_F3D
+        if (model_) model_->unload();
+#endif
+        if (viewer_) { stack_->setCurrentWidget(view_); view_->setFocus(); }
     }
     auto c = cache_.find(path);
     if (c != cache_.end()) { loadSecs_ = 0; showResult(path, c->second); return; }
@@ -772,6 +835,15 @@ void MainWindow::updateStatus() {
         return;
     }
     if (!files_.isEmpty() && idx_ >= 0) l = QString("%1/%2   %3").arg(idx_ + 1).arg(files_.size()).arg(QFileInfo(want_).fileName());
+#ifdef HBV_HAVE_F3D
+    if (showingModel_ && model_) {
+        if (!model_->error().isEmpty()) l += "   cannot open: " + model_->error().left(200);
+        else l += "   3D model   " + humanSize((double)QFileInfo(want_).size());
+        statusL_->setText(l);
+        statusR_->setText("f3d " + ModelView::f3dVersion() + "   drag: rotate, middle: pan, wheel: zoom");
+        return;
+    }
+#endif
     auto res = view_->result();
     if (jobs_.count(want_) && (curPath_ != want_ || (res && res->info.preview))) {
         l += QString("   loading%1%2%").arg(curPath_ == want_ ? " full resolution " : " ").arg(jobs_[want_].ctl->progress / 10);

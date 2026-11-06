@@ -2,9 +2,13 @@
 // file browser. Pictures open in our viewer; any other file behaves exactly as in Dolphin.
 #include "cli.h"
 #include "mainwindow.h"
+#ifdef HBV_HAVE_F3D
+#include "modelview.h"
+#endif
 #include <KColorSchemeManager>
 #include <kcolorscheme_version.h>
 #include <QAbstractItemModel>
+#include <QImage>
 #include <QApplication>
 #include <QPalette>
 #include <QStyleFactory>
@@ -67,12 +71,31 @@ int main(int argc, char** argv) {
         w->resize(1200, 800);
         w->openPath(QString::fromLocal8Bit(argv[2]));
         QString shot = QString::fromLocal8Bit(argv[3]);
-        QTimer::singleShot(5000, w, [w, shot] {
+        QTimer::singleShot(6000, w, [w, shot] {
             printf("dolphinpart: %s %s\n", w->dolphinLoaded() ? "LOADED" : "MISSING", w->dolphinError().toLocal8Bit().constData());
             printf("commands: %d\n", w->commandCount());
+            int rc = w->dolphinLoaded() ? 0 : 3;
+#ifdef HBV_HAVE_F3D
+            printf("f3d: %s\n", ModelView::f3dVersion().toLocal8Bit().constData());
+            if (ModelView* m = w->modelView(); m && !m->path().isEmpty()) {
+                QImage fb = m->grabFramebuffer();
+                // count pixels that differ from the background: >0 means the model was drawn
+                QRgb bg = fb.isNull() ? 0 : fb.pixel(2, 2);
+                long diff = 0;
+                for (int y = 0; y < fb.height(); y += 2)
+                    for (int x = 0; x < fb.width(); x += 2) if (fb.pixel(x, y) != bg) diff++;
+                printf("f3d model: %s engine=%d error='%s' size=%dx%d non_background_px=%ld\n",
+                       m->path().toLocal8Bit().constData(), m->engineOk(), m->error().toLocal8Bit().constData(),
+                       fb.width(), fb.height(), diff);
+                fb.save(shot + ".3d.png");
+                if (!m->engineOk() || !m->error().isEmpty() || diff < 100) rc = 4;
+            }
+#else
+            printf("f3d: NOT BUILT\n");
+#endif
             w->grab().save(shot);
             fflush(stdout);
-            qApp->exit(w->dolphinLoaded() ? 0 : 3);
+            qApp->exit(rc);
         });
         return app.exec();
     }

@@ -40,5 +40,19 @@ add_executable(hb_viewer src/main.cpp src/mainwindow.cpp src/imageview.cpp)
 target_link_libraries(hb_viewer hbcore Qt6::Widgets
   KF6::CoreAddons KF6::Parts KF6::KIOCore KF6::KIOGui KF6::KIOWidgets KF6::KIOFileWidgets
   KF6::XmlGui KF6::ColorScheme KF6::ConfigWidgets)
+# Embedded 3D viewer: libf3d (prebuilt SDK from https://github.com/f3d-app/f3d/releases,
+# pass -DCMAKE_PREFIX_PATH=<sdk>). Without it, 3D files open in an external f3d.
+find_package(f3d CONFIG QUIET COMPONENTS library)
+if(f3d_FOUND)
+  find_package(Qt6 REQUIRED COMPONENTS OpenGLWidgets)
+  target_sources(hb_viewer PRIVATE src/modelview.cpp)
+  target_link_libraries(hb_viewer f3d::libf3d Qt6::OpenGLWidgets)
+  target_compile_definitions(hb_viewer PRIVATE HBV_HAVE_F3D)
+  # AppImage layout: usr/bin/hb_viewer + usr/lib/libf3d*.so
+  set_target_properties(hb_viewer PROPERTIES BUILD_RPATH "$ORIGIN/../lib;${f3d_DIR}/../../../lib" INSTALL_RPATH "$ORIGIN/../lib")
+  message(STATUS "f3d found: ${f3d_VERSION} -> embedded 3D viewer enabled")
+else()
+  message(STATUS "f3d not found -> 3D files open in an external f3d")
+endif()
 target_compile_options(hb_viewer PRIVATE -Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers)
 install(TARGETS hb_viewer RUNTIME DESTINATION bin)
