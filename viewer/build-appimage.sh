@@ -14,9 +14,20 @@ strip build/app/hb_viewer
 rm -rf build/AppDir && mkdir -p build/AppDir/usr/bin
 cp build/app/hb_viewer build/AppDir/usr/bin/
 if [ -n "$F3D_SDK" ]; then
+    # bundle only the SDK libraries hb_viewer really links against (libf3d + its NEEDED
+    # closure); the SDK's OSMesa/LLVM software renderer etc. are left out
     mkdir -p build/AppDir/usr/lib
-    # libf3d + plugins (+ any private libs shipped next to them)
-    find "$F3D_SDK/lib" -maxdepth 2 -name '*.so*' -exec cp -a {} build/AppDir/usr/lib/ \;
+    queue=$(readelf -d build/app/hb_viewer | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')
+    seen=" "
+    while [ -n "$queue" ]; do
+        set -- $queue; lib=$1; shift; queue="$*"
+        case "$seen" in *" $lib "*) continue ;; esac
+        seen="$seen$lib "
+        src=$(find "$F3D_SDK/lib" -maxdepth 2 -name "$lib" | head -1)
+        [ -n "$src" ] || continue                     # system library: not bundled
+        cp -L "$src" "build/AppDir/usr/lib/$lib"
+        queue="$queue $(readelf -d "$src" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"
+    done
     [ -d "$F3D_SDK/share/f3d" ] && mkdir -p build/AppDir/usr/share && cp -a "$F3D_SDK/share/f3d" build/AppDir/usr/share/
     ls -la build/AppDir/usr/lib
 fi

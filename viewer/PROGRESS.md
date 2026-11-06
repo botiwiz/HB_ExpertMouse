@@ -40,7 +40,7 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 
 ## Phases
 1. [x] Image viewer core – done, tested (PSD all modes pixel-exact vs reference, 40000x30000 PSB, GUI under Xvfb)
-2. [ ] 3D mesh viewer via libf3d (https://github.com/f3d-app/f3d): embed in a GtkGLArea using
+2. [x] DONE (CI: cube renders, f3d 4.0.1) 3D mesh viewer via libf3d (https://github.com/f3d-app/f3d): embed in a GtkGLArea using
        f3d::engine::createExternal(); bundle prebuilt libf3d (+VTK) in the AppImage.
        Currently: 3D files are listed in the folder, "D" launches external f3d.
 
@@ -51,6 +51,12 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - Tab toggles browser/viewer; double-click image -> viewer; Esc in viewer -> back to browser;
   other files -> default app. Commands act on browser selection (rename/trash/info/open with...).
 - Start in browser when launched without a file (or with a folder).
+
+## 3D (f3d) notes
+- src/modelview.*: QOpenGLWidget + f3d::engine::createExternal(getProcAddress); Qt input forwarded via
+  interactor trigger* API (pattern from f3d examples/libf3d/cpp/qt6). Built only if CMake finds the f3d SDK
+  (HBV_HAVE_F3D); CI downloads f3d v4.0.1 release, build-appimage.sh bundles libf3d + NEEDED closure.
+- f3d source for reference: git clone --depth 1 https://github.com/f3d-app/f3d (tag v4.0.1).
 
 ## Ideas / TODO
 - Browser: preview pane, back/forward history, f3d thumbnails for 3D files (f3d --output), drag files out.

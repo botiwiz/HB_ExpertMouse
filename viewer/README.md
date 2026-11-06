@@ -5,7 +5,7 @@ A fast image viewer for **huge PSD/PSB files** and all common formats. Its file 
 ## Requirements
 
 - **KDE Plasma 6**, or any Linux system with **Dolphin** (KF6 version) installed.
-- Qt 6, KDE Frameworks 6 and Dolphin are used from your system, not bundled. That keeps the AppImage tiny, and the browser is always your own Dolphin, with your settings and service menus.
+- Qt 6, KDE Frameworks 6 and Dolphin are used from your system, not bundled. That way the browser is always your own Dolphin, with your settings and service menus. libf3d (with its own VTK) **is** bundled, for the 3D viewer.
 - The CI build runs on Debian 13 "trixie" (Qt 6.8, KF6 6.13, glibc 2.41). It should run on distros at least that new, such as Kubuntu 25.04+, Fedora 42+, openSUSE Tumbleweed, Arch or KDE neon (based on Qt's backward compatibility; not tested on each).
 
 ## Get it
@@ -21,7 +21,7 @@ Then `chmod +x HB_Viewer-x86_64.AppImage` and run it, optionally with a file or 
 - **Everything Qt can read on your system**: PNG, JPEG, GIF/WebP/APNG (animated), BMP, TIFF, ICO, SVG, and through KDE's KImageFormats also AVIF, HEIF, JPEG XL, EXR, TGA, XCF, KRA/ORA, PCX and more.
 - **HDR (Radiance), PIC and PNM** also go through stb_image as a fallback.
 - **Camera RAW** (CR2, CR3, NEF, ARW, DNG, ORF, RAF, RW2…) shows the embedded full-size JPEG preview instantly.
-- **3D models** (OBJ, STL, PLY, glTF/GLB, FBX, STEP, USD…): press **D** to open them in [f3d](https://f3d.app). Embedded 3D viewing is the next step.
+- **3D models** open in an **embedded [f3d](https://f3d.app) viewer** (libf3d 4.0.1, bundled in the AppImage). Formats: OBJ, STL, PLY, glTF/GLB, FBX, 3DS, DAE, OFF, VTK formats, STEP/IGES/BREP, USD, Alembic, 3MF, Draco, gaussian splats and more.
 
 ## Why it's fast with huge PSDs
 
@@ -32,6 +32,14 @@ Then `chmod +x HB_Viewer-x86_64.AppImage` and run it, optionally with a file or 
 - Images larger than the memory budget are box-filtered down while decoding, and the status bar says so. The budget is about 1/3 of your RAM by default; you can change it with `max_megapixels` in the ini file.
 
 > PSDs saved with **Maximize Compatibility** turned off may not contain a usable merged image, and may show blank. Photoshop turns this option on by default.
+
+## 3D viewer (f3d)
+
+3D files open inside the window, just like pictures. You can step through a folder with PgUp/PgDn or ←/→, and Esc goes back to the browser.
+
+- **Mouse:** f3d's own controls. Left-drag rotates, middle-drag pans, and the wheel or right-drag zooms. A right-click without dragging opens the command menu.
+- **Keyboard:** goes to f3d itself, so all of f3d's keys work (G grid, E edges, X axis, Space animation…). The "f3d keyboard cheatsheet" command lists them.
+- **Commands** (menu "3D", all can be pinned as Favorites): Reset camera, Front/Top/Right/Isometric view, Toggle grid, Toggle edges, Toggle axis, Toggle orthographic camera, Play/pause animation, FPS counter, Model info, f3d cheatsheet. Ctrl+D opens the model in the external f3d app.
 
 ## Browser = Dolphin
 
@@ -67,7 +75,7 @@ Common keys:
 | B / T / P | Cycle background / tiled view (seamless texture check) / smooth or pixel view |
 | I / F2 / Delete | File info / rename / move to trash (in the browser these are Dolphin's own keys) |
 | Ctrl+C / Ctrl+Shift+C | Copy image / copy path |
-| E / Ctrl+Shift+O / D | Open with… / show in browser / open in f3d |
+| E / Ctrl+Shift+O / D | Open with… / show in browser / open in the external f3d app (Ctrl+D inside the 3D view) |
 | S | Slideshow |
 | Esc | Leave full screen, stop the slideshow, or go back to the browser |
 | Ctrl+Q | Quit |

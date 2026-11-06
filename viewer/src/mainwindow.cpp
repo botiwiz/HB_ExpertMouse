@@ -210,6 +210,7 @@ void MainWindow::loadDolphin() {
     ext_ = KParts::NavigationExtension::childObject(part_);
     // the part's own shortcuts (F2, Del, Ctrl+C...) work while its view has focus
     for (QAction* a : part_->actionCollection()->actions()) {
+        if (!a) continue;
         a->setShortcutContext(Qt::WidgetWithChildrenShortcut);
         part_->widget()->addAction(a);
     }
@@ -420,7 +421,7 @@ void MainWindow::addDolphinCommands() {
         c.action->setShortcuts(keep);
     }
     for (QAction* a : part_->actionCollection()->actions()) {
-        if (a->isSeparator() || a->menu() || a->text().isEmpty() || a->objectName().isEmpty()) continue;
+        if (!a || a->isSeparator() || a->menu() || a->text().isEmpty() || a->objectName().isEmpty()) continue;
         QString label = a->text().remove('&');
         cmds_.append({"dolphin:" + a->objectName(), label, "Dolphin", a});
     }

@@ -42,6 +42,13 @@ jobs:
           # 3D: a small OBJ must render inside the embedded f3d view
           printf 'v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nv 0 0 1\nv 1 0 1\nv 1 1 1\nv 0 1 1\nf 1 2 3 4\nf 5 8 7 6\nf 1 5 6 2\nf 2 6 7 3\nf 3 7 8 4\nf 5 1 4 8\n' > /tmp/cube.obj
           LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x900x24" viewer/build/app/hb_viewer --selftest /tmp/cube.obj selftest3d.png
+      - name: Self-test the packaged AppImage (SDK hidden, bundled libs only)
+        run: |
+          mv /opt/f3d /opt/f3d.hidden
+          cd /tmp && /__w/HB_MISC/HB_MISC/viewer/HB_Viewer-x86_64.AppImage --appimage-extract >/dev/null
+          ls -la squashfs-root/usr/lib; du -sh squashfs-root
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x900x24" /tmp/squashfs-root/AppRun --selftest /tmp/cube.obj /tmp/appimage3d.png
+          ls -la /__w/HB_MISC/HB_MISC/viewer/HB_Viewer-x86_64.AppImage
       - uses: actions/upload-artifact@v4
         with:
           name: HB_Viewer-AppImage
