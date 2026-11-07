@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Builds the "HB Smart Bevel" Geometry Nodes group.
+"""Builds the "HB Better Bevel" Geometry Nodes group.
 
 Pipeline
   1. pick edges (angle / marked sharp / marked with the tool)
@@ -15,8 +15,8 @@ import math
 
 import bpy
 
-GROUP_NAME = "HB Smart Bevel"
-VERSION = 7  # bump to force a rebuild of existing groups
+GROUP_NAME = "HB Better Bevel"
+VERSION = 8  # bump to force a rebuild of existing groups
 P = "hb_sb_"  # prefix of the temporary attributes
 
 # (name, socket type, default, min, max, subtype, description)
@@ -27,15 +27,16 @@ INPUTS = [
     ("Use Angle", "NodeSocketBool", True, None, None, "NONE", "Bevel edges sharper than Angle"),
     ("Angle", "NodeSocketFloat", math.radians(30.0), 0.0, math.pi, "ANGLE", "Minimum angle between faces"),
     ("Use Sharp", "NodeSocketBool", False, None, None, "NONE", "Bevel edges marked Sharp"),
-    ("Use Marked", "NodeSocketBool", True, None, None, "NONE", "Bevel edges marked with the Smart Bevel tool"),
+    ("Use Marked", "NodeSocketBool", True, None, None, "NONE", "Bevel edges marked with the Better Bevel tool"),
     ("Spacing", "NodeSocketFloat", 0.05, 0.0, 1e4, "DISTANCE", "Length of the bevel rows along the edge (0 = keep the edge's own vertices)"),
     ("Tube Resolution", "NodeSocketInt", 16, 3, 256, "NONE", "Sides of the cutting tube"),
     ("Snap", "NodeSocketBool", True, None, None, "NONE", "Snap the bevel's borders onto the boolean cut"),
     ("Weld", "NodeSocketBool", True, None, None, "NONE", "Merge the bevel with the cut mesh"),
     ("Fill Corners", "NodeSocketBool", True, None, None, "NONE", "Close the holes where several bevels meet"),
 ]
-MARK_ATTR = "hb_smart_bevel"   # edge attribute written by the tool
-FACE_ATTR = "smart_bevel"      # face attribute marking the bevel faces (for shaders)
+MARK_ATTR = "hb_better_bevel"   # edge attribute written by the tool
+FACE_ATTR = "better_bevel"      # face attribute marking the bevel faces (for shaders)
+FILL_ATTR = "better_bevel_fill"  # face attribute marking the fan patches closing corner holes
 
 
 def socket_ids(group):
@@ -375,6 +376,7 @@ def _build(tree):
         fflip = b.cmp("LESS_THAN", b.v("DOT_PRODUCT", b.node("GeometryNodeInputNormal").outputs[0], ref), 0.0)
         fan = b.node("GeometryNodeFlipFaces", {"Mesh": fan, "Selection": fflip}).outputs[0]
         fan = b.store(fan, FACE_ATTR, True, "BOOLEAN", "FACE")
+        fan = b.store(fan, FILL_ATTR, True, "BOOLEAN", "FACE")
         fan = b.store(fan, P + "f", 1.0, "FLOAT", "POINT")
         fan = b.node("GeometryNodeSetShadeSmooth", {"Geometry": fan}, domain="FACE").outputs[0]
         join2 = b.node("GeometryNodeJoinGeometry")

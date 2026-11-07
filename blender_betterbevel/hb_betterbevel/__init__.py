@@ -1,12 +1,12 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""HB_SmartBevel: non-destructive tube-boolean bevel as a tool + Geometry Nodes modifier."""
+"""HB_BetterBevel: non-destructive tube-boolean bevel as a tool + Geometry Nodes modifier."""
 
 bl_info = {
-    "name": "HB_SmartBevel",
+    "name": "HB_BetterBevel",
     "author": "Boti Harko",
     "version": (1, 0, 0),
     "blender": (4, 2, 0),
-    "location": "3D View > Toolbar > Smart Bevel",
+    "location": "3D View > Toolbar > Better Bevel",
     "description": "Bevel by booleaning even-thickness tubes out of sharp edges and bridging the cut "
                    "with an adjustable profile; stays live as a Geometry Nodes modifier",
     "category": "Mesh",
@@ -19,9 +19,9 @@ import bpy
 from bpy.props import BoolProperty, FloatProperty, IntProperty, PointerProperty
 from bpy_extras import view3d_utils
 
-from . import nodes
+from . import gridfill, nodes
 
-MOD_NAME = "HB Smart Bevel"
+MOD_NAME = "HB Better Bevel"
 
 # tool setting -> modifier input
 SOCKETS = {
@@ -63,7 +63,7 @@ def pull(settings, mod):
 
 
 def _live(self, context):
-    if not isinstance(self, HBSmartBevelSettings) or self.syncing or not self.live:
+    if not isinstance(self, HBBetterBevelSettings) or self.syncing or not self.live:
         return
     mod = find_mod(context.object)
     if mod is not None:
@@ -84,7 +84,7 @@ def _props():
                                update=_live, description="Minimum angle between the faces"),
         "use_sharp": BoolProperty(name="Marked Sharp", default=False, update=_live,
                                   description="Bevel edges marked Sharp"),
-        "use_marked": BoolProperty(name="Marked Smart Bevel", default=True, update=_live,
+        "use_marked": BoolProperty(name="Marked Better Bevel", default=True, update=_live,
                                    description="Bevel edges marked with this tool in Edit Mode"),
         "spacing": FloatProperty(name="Spacing", default=0.05, min=0.0, soft_max=0.5, subtype='DISTANCE',
                                  unit='LENGTH', update=_live,
@@ -99,10 +99,10 @@ def _props():
     }
 
 
-class HBSmartBevelSettings(bpy.types.PropertyGroup):
+class HBBetterBevelSettings(bpy.types.PropertyGroup):
     __annotations__ = dict(_props(), **{
         "live": BoolProperty(name="Live", default=True,
-                             description="Tool settings edit the active object's Smart Bevel modifier"),
+                             description="Tool settings edit the active object's Better Bevel modifier"),
         "syncing": BoolProperty(options={'HIDDEN', 'SKIP_SAVE'}),
     })
 
@@ -132,7 +132,7 @@ def draw_settings(layout, st, full=True):
 
 
 def apply_to(obj, st, context):
-    """Add (or update) the Smart Bevel modifier on obj with the tool settings."""
+    """Add (or update) the Better Bevel modifier on obj with the tool settings."""
     mod = find_mod(obj)
     if mod is None:
         mod = obj.modifiers.new(MOD_NAME, 'NODES')
@@ -145,7 +145,7 @@ def apply_to(obj, st, context):
 
 
 def mark_edges(obj, value):
-    """Write the Smart Bevel edge mark on the selected edges (Edit Mode)."""
+    """Write the Better Bevel edge mark on the selected edges (Edit Mode)."""
     me = obj.data
     bm = bmesh.from_edit_mesh(me)
     lay = bm.edges.layers.bool.get(nodes.MARK_ATTR) if hasattr(bm.edges.layers, "bool") else None
@@ -163,10 +163,10 @@ def mark_edges(obj, value):
     return n
 
 
-class OBJECT_OT_hb_smart_bevel(bpy.types.Operator):
-    """Add a Smart Bevel modifier with the tool settings (Edit Mode: mark the selected edges for it)"""
-    bl_idname = "object.hb_smart_bevel"
-    bl_label = "Smart Bevel"
+class OBJECT_OT_hb_better_bevel(bpy.types.Operator):
+    """Add a Better Bevel modifier with the tool settings (Edit Mode: mark the selected edges for it)"""
+    bl_idname = "object.hb_better_bevel"
+    bl_label = "Better Bevel"
     bl_options = {'REGISTER', 'UNDO'}
     __annotations__ = _props()
 
@@ -184,7 +184,7 @@ class OBJECT_OT_hb_smart_bevel(bpy.types.Operator):
         draw_settings(self.layout, self)
 
     def execute(self, context):
-        st = context.scene.hb_smartbevel
+        st = context.scene.hb_betterbevel
         for k in SOCKETS:  # anything not given explicitly comes from the tool settings
             if not self.properties.is_property_set(k):
                 setattr(self, k, getattr(st, k))
@@ -206,10 +206,10 @@ class OBJECT_OT_hb_smart_bevel(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class OBJECT_OT_hb_smart_bevel_clear(bpy.types.Operator):
-    """Edit Mode: remove the Smart Bevel mark from the selected edges. Object Mode: remove the modifier"""
-    bl_idname = "object.hb_smart_bevel_clear"
-    bl_label = "Clear Smart Bevel"
+class OBJECT_OT_hb_better_bevel_clear(bpy.types.Operator):
+    """Edit Mode: remove the Better Bevel mark from the selected edges. Object Mode: remove the modifier"""
+    bl_idname = "object.hb_better_bevel_clear"
+    bl_label = "Clear Better Bevel"
     bl_options = {'REGISTER', 'UNDO'}
 
     def execute(self, context):
@@ -225,10 +225,10 @@ class OBJECT_OT_hb_smart_bevel_clear(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class OBJECT_OT_hb_smart_bevel_click(bpy.types.Operator):
-    """Click an object: add Smart Bevel with the tool settings, or pick up the settings of its existing one"""
-    bl_idname = "object.hb_smart_bevel_click"
-    bl_label = "Smart Bevel Click"
+class OBJECT_OT_hb_better_bevel_click(bpy.types.Operator):
+    """Click an object: add Better Bevel with the tool settings, or pick up the settings of its existing one"""
+    bl_idname = "object.hb_better_bevel_click"
+    bl_label = "Better Bevel Click"
     bl_options = {'REGISTER', 'UNDO'}
 
     def invoke(self, context, event):
@@ -250,49 +250,53 @@ class OBJECT_OT_hb_smart_bevel_click(bpy.types.Operator):
                 o.select_set(False)
         obj.select_set(True)
         context.view_layer.objects.active = obj
-        st = context.scene.hb_smartbevel
+        st = context.scene.hb_betterbevel
         mod = find_mod(obj)
         if mod is not None:
             pull(st, mod)
-            self.report({'INFO'}, "Smart Bevel: editing %s" % obj.name)
+            self.report({'INFO'}, "Better Bevel: editing %s" % obj.name)
         else:
             apply_to(obj, st, context)
         return {'FINISHED'}
 
 
-class VIEW3D_PT_hb_smartbevel_options(bpy.types.Panel):
+class VIEW3D_PT_hb_betterbevel_options(bpy.types.Panel):
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'HEADER'
-    bl_label = "Smart Bevel Options"
+    bl_label = "Better Bevel Options"
 
     def draw(self, context):
         self.layout.use_property_split = True
-        st = context.scene.hb_smartbevel
+        st = context.scene.hb_betterbevel
         draw_settings(self.layout, st)
         self.layout.prop(st, "live")
 
 
 def _tool_settings(context, layout, tool):
-    st = context.scene.hb_smartbevel
+    st = context.scene.hb_betterbevel
     layout.prop(st, "width")
     layout.prop(st, "segments")
     layout.prop(st, "profile", slider=True)
     layout.prop(st, "angle")
-    layout.popover("VIEW3D_PT_hb_smartbevel_options", text="", icon='PREFERENCES')
+    layout.popover("VIEW3D_PT_hb_betterbevel_options", text="", icon='PREFERENCES')
     if context.mode == 'EDIT_MESH':
-        layout.operator("object.hb_smart_bevel", text="Mark Selected", icon='CHECKMARK')
-        layout.operator("object.hb_smart_bevel_clear", text="Clear", icon='X')
+        layout.operator("object.hb_better_bevel", text="Mark Selected", icon='CHECKMARK')
+        layout.operator("object.hb_better_bevel_clear", text="Clear", icon='X')
+        layout.operator("mesh.hb_better_bevel_gridfill", icon='MESH_GRID')
     else:
-        layout.operator("object.hb_smart_bevel", text="Apply to Selected", icon='CHECKMARK')
+        layout.operator("object.hb_better_bevel", text="Apply to Selected", icon='CHECKMARK')
+        layout.operator("object.hb_better_bevel_apply_fill", text="Apply & Grid Fill", icon='MESH_GRID')
 
 
 def _make_tool(mode):
     if mode == 'OBJECT':
-        keymap = (("object.hb_smart_bevel_click", {"type": 'LEFTMOUSE', "value": 'CLICK'}, None),
-                  ("object.hb_smart_bevel_click", {"type": 'LEFTMOUSE', "value": 'CLICK', "shift": True}, None),
-                  ("object.hb_smart_bevel", {"type": 'RET', "value": 'PRESS'}, None))
+        keymap = (("object.hb_better_bevel_click", {"type": 'LEFTMOUSE', "value": 'CLICK'}, None),
+                  ("object.hb_better_bevel_click", {"type": 'LEFTMOUSE', "value": 'CLICK', "shift": True}, None),
+                  ("object.hb_better_bevel", {"type": 'RET', "value": 'PRESS'}, None),
+                  ("object.hb_better_bevel_apply_fill", {"type": 'RET', "value": 'PRESS', "shift": True}, None))
         desc = ("Click an object to bevel it with the tool settings (click a bevelled object to edit its "
-                "settings). The bevel stays live as a Geometry Nodes modifier")
+                "settings). The bevel stays live as a Geometry Nodes modifier. Shift+Enter: apply and Grid Fill "
+                "the corner patches")
     else:
         keymap = (("view3d.select", {"type": 'LEFTMOUSE', "value": 'CLICK'}, {"properties": [("deselect_all", True)]}),
                   ("view3d.select", {"type": 'LEFTMOUSE', "value": 'CLICK', "shift": True},
@@ -302,15 +306,16 @@ def _make_tool(mode):
                    {"properties": [("mode", 'ADD')]}),
                   ("view3d.select_box", {"type": 'LEFTMOUSE', "value": 'CLICK_DRAG', "ctrl": True},
                    {"properties": [("mode", 'SUB')]}),
-                  ("object.hb_smart_bevel", {"type": 'RET', "value": 'PRESS'}, None),
-                  ("object.hb_smart_bevel_clear", {"type": 'RET', "value": 'PRESS', "alt": True}, None))
-        desc = ("Select edges, press Enter (or Mark Selected) to give them a Smart Bevel; Alt+Enter clears. "
-                "Sharp edges are picked by angle too, see the tool settings")
-    return type("HB_TL_smart_bevel_%s" % mode.lower(), (bpy.types.WorkSpaceTool,), {
+                  ("object.hb_better_bevel", {"type": 'RET', "value": 'PRESS'}, None),
+                  ("object.hb_better_bevel_clear", {"type": 'RET', "value": 'PRESS', "alt": True}, None),
+                  ("mesh.hb_better_bevel_gridfill", {"type": 'RET', "value": 'PRESS', "shift": True}, None))
+        desc = ("Select edges, press Enter (or Mark Selected) to give them a Better Bevel; Alt+Enter clears. "
+                "Shift+Enter: replace the selected faces (a leftover patch) with a Grid Fill")
+    return type("HB_TL_better_bevel_%s" % mode.lower(), (bpy.types.WorkSpaceTool,), {
         "bl_space_type": 'VIEW_3D',
         "bl_context_mode": mode,
-        "bl_idname": "hb_smartbevel.tool",
-        "bl_label": "Smart Bevel",
+        "bl_idname": "hb_betterbevel.tool",
+        "bl_label": "Better Bevel",
         "bl_description": desc,
         "bl_icon": "ops.mesh.bevel",
         "bl_keymap": keymap,
@@ -320,33 +325,41 @@ def _make_tool(mode):
 
 def _menu_object(self, context):
     self.layout.separator()
-    self.layout.operator("object.hb_smart_bevel", icon='MOD_BEVEL')
+    self.layout.operator("object.hb_better_bevel", icon='MOD_BEVEL')
+    self.layout.operator("object.hb_better_bevel_apply_fill", text="Apply Better Bevel & Grid Fill", icon='MESH_GRID')
 
 
 def _menu_edge(self, context):
     self.layout.separator()
-    self.layout.operator("object.hb_smart_bevel", text="Mark Smart Bevel")
-    self.layout.operator("object.hb_smart_bevel_clear", text="Clear Smart Bevel")
+    self.layout.operator("object.hb_better_bevel", text="Mark Better Bevel")
+    self.layout.operator("object.hb_better_bevel_clear", text="Clear Better Bevel")
+    self.layout.operator("mesh.hb_better_bevel_gridfill", text="Grid Fill Patch (Better Bevel)")
+
+
+def _menu_face(self, context):
+    self.layout.separator()
+    self.layout.operator("mesh.hb_better_bevel_gridfill", text="Grid Fill Patch (Better Bevel)", icon='MESH_GRID')
 
 
 _tools = []
-classes = (HBSmartBevelSettings, OBJECT_OT_hb_smart_bevel, OBJECT_OT_hb_smart_bevel_clear,
-           OBJECT_OT_hb_smart_bevel_click, VIEW3D_PT_hb_smartbevel_options)
+classes = (HBBetterBevelSettings, OBJECT_OT_hb_better_bevel, OBJECT_OT_hb_better_bevel_clear,
+           OBJECT_OT_hb_better_bevel_click, VIEW3D_PT_hb_betterbevel_options) + gridfill.classes
 
 
 def register():
     for c in classes:
         bpy.utils.register_class(c)
-    bpy.types.Scene.hb_smartbevel = PointerProperty(type=HBSmartBevelSettings)
+    bpy.types.Scene.hb_betterbevel = PointerProperty(type=HBBetterBevelSettings)
     bpy.types.VIEW3D_MT_object.append(_menu_object)
     bpy.types.VIEW3D_MT_edit_mesh_edges.append(_menu_edge)
+    bpy.types.VIEW3D_MT_edit_mesh_faces.append(_menu_face)
     for mode in ('OBJECT', 'EDIT_MESH'):
         tool = _make_tool(mode)
         try:
             bpy.utils.register_tool(tool, separator=True)
             _tools.append(tool)
         except Exception as ex:
-            print("HB_SmartBevel: tool not added for %s (%s)" % (mode, ex))
+            print("HB_BetterBevel: tool not added for %s (%s)" % (mode, ex))
 
 
 def unregister():
@@ -356,8 +369,9 @@ def unregister():
         except Exception:
             pass
     _tools.clear()
+    bpy.types.VIEW3D_MT_edit_mesh_faces.remove(_menu_face)
     bpy.types.VIEW3D_MT_edit_mesh_edges.remove(_menu_edge)
     bpy.types.VIEW3D_MT_object.remove(_menu_object)
-    del bpy.types.Scene.hb_smartbevel
+    del bpy.types.Scene.hb_betterbevel
     for c in reversed(classes):
         bpy.utils.unregister_class(c)
