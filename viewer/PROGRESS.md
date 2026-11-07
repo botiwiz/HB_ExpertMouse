@@ -72,7 +72,7 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - Toolbar "view_mode" button (dropdown + click cycles): Details / Icons / Thumbnails / Cascade.
   Dolphin part actions used: "details", "icons", "show_preview" (names printed by --selftest to verify).
 
-## IN PROGRESS: preview panel = full ImageView (user: "all zooming and panning of the image viewer")
+## DONE (CI green, run 42398433194): preview panel = full ImageView (user: "all zooming and panning of the image viewer")
 - PreviewPane: QLabel -> ImageView (wheel zoom at cursor, drag pan, middle/0 fit, 1 = 100%, +/-, W, L/R, H/V when
   focused; double-click toggles fit/100%); mini toolbar with zoom/rotate/flip + zoom %. Images: load_preview(1.5 MP)
   then load_image(64 MP budget, cancelled on selection change) upgrades in place. 3D render + KIO thumbs at 1024 px.
