@@ -24,9 +24,11 @@ struct Job {
     std::function<void(const QImage&, const QString&)> done;
 };
 
-std::mutex mu;
-std::condition_variable cv;
-std::unique_ptr<Job> pending;          // latest request only
+// Leaked on purpose: the worker thread lives until process exit, and destroying a
+// condition_variable that a thread still waits on blocks forever (glibc) at exit.
+std::mutex& mu = *new std::mutex;
+std::condition_variable& cv = *new std::condition_variable;
+Job*& pendingSlot = *new Job*(nullptr);  // latest request only (owned)
 bool started = false;
 
 #ifdef HBV_HAVE_F3D
@@ -37,8 +39,9 @@ void worker() {
         std::unique_ptr<Job> job;
         {
             std::unique_lock<std::mutex> lk(mu);
-            cv.wait(lk, [] { return pending != nullptr; });
-            job = std::move(pending);
+            cv.wait(lk, [] { return pendingSlot != nullptr; });
+            job.reset(pendingSlot);
+            pendingSlot = nullptr;
         }
         QImage img;
         QString err;
@@ -111,7 +114,8 @@ bool Thumb3D::request(const QString& path, int size, QObject* context, std::func
         std::thread(worker).detach();
         started = true;
     }
-    pending = std::make_unique<Job>(Job{path, size, context, std::move(done)});
+    delete pendingSlot;
+    pendingSlot = new Job{path, size, context, std::move(done)};
     cv.notify_one();
     return true;
 #else
