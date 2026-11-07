@@ -1,6 +1,9 @@
 #include "previewpane.h"
 #include "decode.h"
 #include "imageview.h"
+#ifdef HBV_HAVE_F3D
+#include "modelview.h"
+#endif
 #include "thumb3d.h"
 #include <KIO/PreviewJob>
 #include <QCoreApplication>
@@ -9,6 +12,9 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QPointer>
+#include <QApplication>
+#include <QStackedWidget>
+#include <QWheelEvent>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <algorithm>
@@ -32,6 +38,9 @@ PreviewPane::PreviewPane(QWidget* parent) : QWidget(parent) {
     view_->wheelZoom = true;
     view_->fitOnOpen = true;
     view_->installEventFilter(this);
+    stack_ = new QStackedWidget;
+    stack_->setMinimumHeight(200);
+    stack_->addWidget(view_);
     connect(view_, &ImageView::doubleClicked, this, [this] {   // toggle fit <-> actual pixels
         if (view_->zoomPercent() > 99.5 && view_->zoomPercent() < 100.5) view_->fit(true); else view_->actualPixels();
     });
@@ -71,7 +80,7 @@ PreviewPane::PreviewPane(QWidget* parent) : QWidget(parent) {
     info_->setTextInteractionFlags(Qt::TextSelectableByMouse);
     info_->setAlignment(Qt::AlignTop | Qt::AlignHCenter);
     info_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-    l->addWidget(view_, 1);
+    l->addWidget(stack_, 1);
     l->addWidget(tools_);
     l->addWidget(info_);
 }
@@ -85,6 +94,19 @@ void PreviewPane::cancelLoad() {
 
 // keys work while the canvas has focus (click it first), so the browser keeps its own keys
 bool PreviewPane::eventFilter(QObject* o, QEvent* e) {
+    if (o == view_ && is3d_ && !live_ && (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::Wheel)) {
+        goLive3D(e);
+        return true;
+    }
+#ifdef HBV_HAVE_F3D
+    if (o == view_ && live_ && model_ && (e->type() == QEvent::MouseMove || e->type() == QEvent::MouseButtonRelease)) {
+        auto* m = static_cast<QMouseEvent*>(e);       // drag that started on the still: keep it going
+        QMouseEvent ev(e->type(), model_->mapFromGlobal(m->globalPosition()), m->scenePosition(), m->globalPosition(),
+                       m->button(), m->buttons(), m->modifiers());
+        QApplication::sendEvent(model_, &ev);
+        return true;
+    }
+#endif
     if (o == view_ && e->type() == QEvent::KeyPress) {
         auto* k = static_cast<QKeyEvent*>(e);
         if (k->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) return false;
@@ -104,9 +126,56 @@ bool PreviewPane::eventFilter(QObject* o, QEvent* e) {
     return QWidget::eventFilter(o, e);
 }
 
+// The still render is cheap to browse through; the first click / wheel on it loads the model
+// into a real f3d view (same controls as the 3D viewer) and hands that event over.
+void PreviewPane::goLive3D(QEvent* forward) {
+#ifdef HBV_HAVE_F3D
+    if (!is3d_ || path3d_.isEmpty()) return;
+    if (!model_) {
+        model_ = new ModelView;
+        stack_->addWidget(model_);
+    }
+    live_ = true;
+    tools_->hide();
+    stack_->setCurrentWidget(model_);
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    model_->load(path3d_);
+    QApplication::restoreOverrideCursor();
+    model_->setFocus();
+    info_->setText(baseInfo_ + (model_->error().isEmpty()
+        ? QStringLiteral("<br>3D model - drag to orbit, right-drag/wheel to zoom, middle-drag to pan")
+        : "<br>" + model_->error().left(200).toHtmlEscaped()));
+    if (!forward) return;
+    if (forward->type() == QEvent::MouseButtonPress) {
+        auto* m = static_cast<QMouseEvent*>(forward);
+        QMouseEvent ev(QEvent::MouseButtonPress, m->position(), m->scenePosition(), m->globalPosition(),
+                       m->button(), m->buttons(), m->modifiers());
+        QApplication::sendEvent(model_, &ev);
+    } else if (forward->type() == QEvent::Wheel) {
+        auto* w = static_cast<QWheelEvent*>(forward);
+        QWheelEvent ev(w->position(), w->globalPosition(), w->pixelDelta(), w->angleDelta(), w->buttons(),
+                       w->modifiers(), w->phase(), w->inverted());
+        QApplication::sendEvent(model_, &ev);
+    }
+#else
+    (void)forward;
+#endif
+}
+
+void PreviewPane::leaveLive3D() {
+#ifdef HBV_HAVE_F3D
+    if (live_ && model_) model_->unload();          // frees the model's memory
+#endif
+    live_ = false;
+    stack_->setCurrentWidget(view_);
+    tools_->show();
+}
+
 void PreviewPane::clearItem() {
     ++gen_;
     cancelLoad();
+    leaveLive3D();
+    is3d_ = false;
     item_ = KFileItem();
     view_->clear();
     info_->setText("<i>Nothing selected</i>");
@@ -125,6 +194,8 @@ void PreviewPane::showItem(const KFileItem& it) {
     if (it.isNull()) { clearItem(); return; }
     int gen = ++gen_;
     cancelLoad();
+    leaveLive3D();
+    is3d_ = false;
     item_ = it;
     setPicture(QIcon::fromTheme(it.iconName()).pixmap(128, 128).toImage());
     baseInfo_ = "<b>" + it.text().toHtmlEscaped() + "</b><br>" + it.mimeComment().toHtmlEscaped() +
@@ -168,11 +239,13 @@ void PreviewPane::showItem(const KFileItem& it) {
     }
     if (it.isLocalFile() && is_3d_ext(ext) && Thumb3D::available()) {
         // 3D model: rendered by our own offscreen f3d engine on a worker thread
+        is3d_ = true;
+        path3d_ = it.localPath();
         info_->setText(baseInfo_ + "<br><i>rendering 3D preview...</i>");
         Thumb3D::request(it.localPath(), 1024, this, [this, gen](const QImage& img, const QString& err) {
-            if (gen != gen_) return;
+            if (gen != gen_ || live_) return;
             setPicture(img);
-            info_->setText(baseInfo_ + (err.isEmpty() ? QStringLiteral("<br>3D model") : "<br>" + err.left(200).toHtmlEscaped()));
+            info_->setText(baseInfo_ + (err.isEmpty() ? QStringLiteral("<br>3D model - click or drag to orbit") : "<br>" + err.left(200).toHtmlEscaped()));
         });
         return;
     }
