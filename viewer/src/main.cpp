@@ -5,6 +5,7 @@
 #include "mainwindow.h"
 #ifdef HBV_HAVE_F3D
 #include "modelview.h"
+#include "thumb3d.h"
 #endif
 #ifdef HBV_HAVE_MPV
 #include "videoview.h"
@@ -23,6 +24,7 @@
 #include <QTimer>
 #include <cstdio>
 #include <cstring>
+#include <memory>
 
 // Always dark: Breeze Dark colour scheme (also used by the embedded Dolphin view);
 // a hand-made dark palette when the scheme isn't installed.
@@ -132,6 +134,19 @@ int main(int argc, char** argv) {
             }
 #ifdef HBV_HAVE_F3D
             printf("f3d: %s\n", ModelView::f3dVersion().toLocal8Bit().constData());
+            if (QByteArray f = qgetenv("HBV_SELFTEST_PREVIEW3D"); !f.isEmpty()) {
+                // preview panel renderer: background thread, own offscreen engine
+                struct R { QImage img; QString err; bool done = false; };
+                auto r = std::make_shared<R>();
+                Thumb3D::request(QString::fromLocal8Bit(f), 256, w, [r](const QImage& img, const QString& e) { r->img = img; r->err = e; r->done = true; });
+                for (int i = 0; i < 200 && !r->done; i++) { QEventLoop l; QTimer::singleShot(100, &l, &QEventLoop::quit); l.exec(); }
+                QImage got = r->img; QString err = r->err; bool doneFlag = r->done;
+                long diff = 0;
+                if (!got.isNull()) { QRgb bg = got.pixel(1, 1); for (int y = 0; y < got.height(); y++) for (int x = 0; x < got.width(); x++) if (got.pixel(x, y) != bg) diff++; }
+                printf("preview3d: done=%d size=%dx%d drawn=%ld err=%s -> %s\n", doneFlag, got.width(), got.height(), diff,
+                       err.toLocal8Bit().constData(), diff > 100 ? "OK" : "FAIL");
+                if (diff <= 100) rc = 9;
+            }
             if (ModelView* m = w->modelView(); m && !m->path().isEmpty()) {
                 QImage fb = m->frame();
                 // count pixels that differ from the background: >0 means the model was drawn

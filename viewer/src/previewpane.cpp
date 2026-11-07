@@ -1,5 +1,6 @@
 #include "previewpane.h"
 #include "decode.h"
+#include "thumb3d.h"
 #include <KIO/PreviewJob>
 #include <QCoreApplication>
 #include <QIcon>
@@ -76,6 +77,16 @@ void PreviewPane::showItem(const KFileItem& it) {
                 self->info_->setText(self->baseInfo_ + extra);
             }, Qt::QueuedConnection);
         }).detach();
+        return;
+    }
+    if (it.isLocalFile() && is_3d_ext(ext) && Thumb3D::available()) {
+        // 3D model: rendered by our own offscreen f3d engine on a worker thread
+        info_->setText(baseInfo_ + "<br><i>rendering 3D preview...</i>");
+        Thumb3D::request(it.localPath(), 512, this, [this, gen](const QImage& img, const QString& err) {
+            if (gen != gen_) return;
+            if (!img.isNull()) setPicture(QPixmap::fromImage(img));
+            info_->setText(baseInfo_ + (err.isEmpty() ? QStringLiteral("<br>3D model") : "<br>" + err.left(200).toHtmlEscaped()));
+        });
         return;
     }
     auto* job = KIO::filePreview(KFileItemList{it}, QSize(512, 512));

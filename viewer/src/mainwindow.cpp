@@ -396,9 +396,14 @@ void MainWindow::buildCommands() {
             }, nullptr);
         viewModeAct_->setMenu(menu);
     }
-    addCmd("preview_panel", "Preview panel", "Browser", "view-preview", {K(Qt::Key_F12)}, [this] {
-        sidePreview_->setVisible(!sidePreview_->isVisible()); updateSidePreview(); }, nullptr,
-        [this] { return sidePreview_->isVisible(); });
+    {
+        QAction* pp = addCmd("preview_panel", "Preview panel (right side)", "Browser", "sidebar-show-right", {K(Qt::Key_F12)}, [this] {
+            sidePreview_->setVisible(!sidePreview_->isVisible()); updateSidePreview(); }, nullptr,
+            [this] { return sidePreview_->isVisible(); });
+        // distinct "right sidebar" icon (the Thumbnails view mode already uses view-preview)
+        for (const char* n : {"sidebar-show-right", "view-right-new", "view-split-left-right", "view-sidetree"})
+            if (QIcon::hasThemeIcon(QString::fromLatin1(n))) { pp->setIcon(QIcon::fromTheme(QString::fromLatin1(n))); break; }
+    }
     {
         QWidget* C = cascade_;                          // keys that only act inside the cascade view
         addCmd("cascade_copy", "Copy", "Browser", "edit-copy", {K::Copy}, [this] { clipboardCopy(false); }, C);
@@ -774,6 +779,10 @@ void MainWindow::loadSettings() {
         int i = favs_.indexOf("f3d_cheatsheet");
         if (!favs_.contains("f3d_halfres")) favs_.insert(i >= 0 ? i : favs_.size(), "f3d_halfres");
         s.setValue("favorites/added_f3d_halfres", true);
+    }
+    if (!s.value("favorites/added_preview_panel_v2", false).toBool()) {  // make sure the panel button is there
+        if (!favs_.contains("preview_panel")) favs_.insert(std::min<int>(1, favs_.size()), "preview_panel");
+        s.setValue("favorites/added_preview_panel_v2", true);
     }
     if (!s.value("favorites/added_f3d_ssao", false).toBool()) {         // once: ambient occlusion toggle
         int i = favs_.indexOf("f3d_cheatsheet");
