@@ -72,11 +72,13 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - Toolbar "view_mode" button (dropdown + click cycles): Details / Icons / Thumbnails / Cascade.
   Dolphin part actions used: "details", "icons", "show_preview" (names printed by --selftest to verify).
 
-## IN PROGRESS: 3D thumbnails in the preview panel + clearer panel toggle
+## DONE (CI green, run 42327180290): 3D thumbnails in the preview panel + clearer panel toggle
 - src/thumb3d.* (HBV_HAVE_F3D): worker thread with its own offscreen f3d engine (EGL->GLX), latest-request-wins,
   renders 512px PNG-like QImage; PreviewPane uses it for 3D extensions. Self-test HBV_SELFTEST_PREVIEW3D.
 - preview_panel command: distinct icon (sidebar-show-right / view-right-new), label "Preview panel (right side)",
   favorites migration flag added_preview_panel_v2 ensures it is on the toolbar.
+- Exit hang fixed: worker waits on cv forever; static cv destructor blocked at exit -> mutex/cv leaked on purpose.
+  CI self-tests now wrapped in `timeout 240`.
 
 ## DONE (CI green, run 42186458573): batch of user fixes
 - Double open root cause: KParts NavigationExtension re-emits openUrlRequest as openUrlRequestDelayed
