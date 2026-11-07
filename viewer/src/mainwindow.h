@@ -44,6 +44,7 @@ public:
     QString dolphinError() const { return partError_; }
     QString lastFolder() const;
     ColumnBrowser* cascade() const { return cascade_; }
+    PreviewPane* sidePreview() const { return sidePreview_; }
     void setCascadeMode(bool on) { setCascade(on); }
     void selftestViewModes();
     void selftestActivate(const QUrl& url, const QString& mime);   // emit one Dolphin activation

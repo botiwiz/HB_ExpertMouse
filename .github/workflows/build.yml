@@ -53,6 +53,8 @@ jobs:
           printf '[Default Applications]\ntext/plain=fakeopen.desktop\n' > ~/.config/mimeapps.list
           echo hello > /tmp/note.txt; rm -f /tmp/hbv_open.log
           HBV_SELFTEST_PREVIEW3D=/tmp/cube.obj LIBGL_ALWAYS_SOFTWARE=1 timeout 240 xvfb-run -a -s "-screen 0 1280x900x24" viewer/build/app/hb_viewer --selftest /tmp selftest_preview3d.png
+          ffmpeg -loglevel error -f lavfi -i testsrc=size=3000x2000 -frames:v 1 /tmp/big.png
+          HBV_SELFTEST_PANEL=/tmp/big.png timeout 240 xvfb-run -a -s "-screen 0 1280x900x24" viewer/build/app/hb_viewer --selftest /tmp selftest_panel.png
           HBV_SELFTEST_OPEN=/tmp/note.txt timeout 240 xvfb-run -a -s "-screen 0 1280x900x24" viewer/build/app/hb_viewer --selftest /usr/share selftest_open.png
           HBV_SELFTEST_MODES=1 timeout 240 xvfb-run -a -s "-screen 0 1280x900x24" viewer/build/app/hb_viewer --selftest /usr/share selftest_modes.png
           HBV_SELFTEST_CASCADE=1 timeout 240 xvfb-run -a -s "-screen 0 1280x900x24" viewer/build/app/hb_viewer --selftest /usr/share/icons/hicolor selftest_cascade.png

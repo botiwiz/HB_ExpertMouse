@@ -72,6 +72,12 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - Toolbar "view_mode" button (dropdown + click cycles): Details / Icons / Thumbnails / Cascade.
   Dolphin part actions used: "details", "icons", "show_preview" (names printed by --selftest to verify).
 
+## IN PROGRESS: preview panel = full ImageView (user: "all zooming and panning of the image viewer")
+- PreviewPane: QLabel -> ImageView (wheel zoom at cursor, drag pan, middle/0 fit, 1 = 100%, +/-, W, L/R, H/V when
+  focused; double-click toggles fit/100%); mini toolbar with zoom/rotate/flip + zoom %. Images: load_preview(1.5 MP)
+  then load_image(64 MP budget, cancelled on selection change) upgrades in place. 3D render + KIO thumbs at 1024 px.
+- Self-test HBV_SELFTEST_PANEL=/tmp/big.png (3000x2000) expects full-res + zoom changes.
+
 ## DONE (CI green, run 42327180290): 3D thumbnails in the preview panel + clearer panel toggle
 - src/thumb3d.* (HBV_HAVE_F3D): worker thread with its own offscreen f3d engine (EGL->GLX), latest-request-wins,
   renders 512px PNG-like QImage; PreviewPane uses it for 3D extensions. Self-test HBV_SELFTEST_PREVIEW3D.

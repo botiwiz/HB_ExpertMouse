@@ -2,7 +2,10 @@
 // file browser. Pictures open in our viewer; any other file behaves exactly as in Dolphin.
 #include "cli.h"
 #include "columnbrowser.h"
+#include "imageview.h"
 #include "mainwindow.h"
+#include "previewpane.h"
+#include <KFileItem>
 #ifdef HBV_HAVE_F3D
 #include "modelview.h"
 #include "thumb3d.h"
@@ -96,6 +99,24 @@ int main(int argc, char** argv) {
                 printf("open requests handled for one activation: %d -> %s  (external launches seen: %d)\n",
                        w->openRequests, w->openRequests == 1 ? "OK" : "FAIL", launched);
                 if (w->openRequests != 1) rc = 8;
+            }
+            if (QByteArray f = qgetenv("HBV_SELFTEST_PANEL"); !f.isEmpty()) {
+                // right preview panel: quick preview, then full resolution, then zoom works
+                PreviewPane* pp = w->sidePreview();
+                pp->setVisible(true);
+                pp->showItem(KFileItem(QUrl::fromLocalFile(QString::fromLocal8Bit(f))));
+                ImageView* v = pp->view();
+                for (int i = 0; i < 150; i++) {
+                    if (v->image() && v->result() && !v->result()->info.preview) break;
+                    QEventLoop l; QTimer::singleShot(100, &l, &QEventLoop::quit); l.exec();
+                }
+                int iw = v->image() ? v->image()->width() : 0, ow = v->result() ? v->result()->info.orig_w : -1;
+                double z0 = v->zoomPercent();
+                v->zoomStep(1); double z1 = v->zoomPercent();
+                v->actualPixels(); double z2 = v->zoomPercent();
+                bool ok = iw > 0 && iw == ow && z1 > z0 && z2 > 99 && z2 < 101;
+                printf("panel: decoded=%d orig=%d zoom fit=%.1f%% in=%.1f%% 100=%.1f%% -> %s\n", iw, ow, z0, z1, z2, ok ? "OK" : "FAIL");
+                if (!ok) rc = 10;
             }
             if (qEnvironmentVariableIsSet("HBV_SELFTEST_CASCADE")) {
                 ColumnBrowser* c = w->cascade();
