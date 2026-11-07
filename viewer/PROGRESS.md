@@ -72,7 +72,7 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - Toolbar "view_mode" button (dropdown + click cycles): Details / Icons / Thumbnails / Cascade.
   Dolphin part actions used: "details", "icons", "show_preview" (names printed by --selftest to verify).
 
-## Preview panel fixes (user screenshot: blurry/cropped after resize; wants one-line info)
+## DONE (CI green, run 42399446072): Preview panel fixes (user screenshot: blurry/cropped after resize; wants one-line info)
 - Orbitable 3D in the panel was added then REVERTED on user request (keep the still render).
 - ImageView::resizeEvent didn't call QOpenGLWidget::resizeEvent -> FBO kept old size, stretched. Fixed (main viewer too).
 - Texture cache keyed by an image generation counter instead of the Image pointer (address reuse).
