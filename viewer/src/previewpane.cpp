@@ -1,9 +1,6 @@
 #include "previewpane.h"
 #include "decode.h"
 #include "imageview.h"
-#ifdef HBV_HAVE_F3D
-#include "modelview.h"
-#endif
 #include "thumb3d.h"
 #include <KIO/PreviewJob>
 #include <QCoreApplication>
@@ -12,10 +9,11 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QPointer>
-#include <QApplication>
-#include <QStackedWidget>
-#include <QWheelEvent>
+#include <QMouseEvent>
+#include <QScrollArea>
+#include <QScrollBar>
 #include <QToolButton>
+#include <QWheelEvent>
 #include <QVBoxLayout>
 #include <algorithm>
 #include <memory>
@@ -38,9 +36,6 @@ PreviewPane::PreviewPane(QWidget* parent) : QWidget(parent) {
     view_->wheelZoom = true;
     view_->fitOnOpen = true;
     view_->installEventFilter(this);
-    stack_ = new QStackedWidget;
-    stack_->setMinimumHeight(200);
-    stack_->addWidget(view_);
     connect(view_, &ImageView::doubleClicked, this, [this] {   // toggle fit <-> actual pixels
         if (view_->zoomPercent() > 99.5 && view_->zoomPercent() < 100.5) view_->fit(true); else view_->actualPixels();
     });
@@ -75,14 +70,26 @@ PreviewPane::PreviewPane(QWidget* parent) : QWidget(parent) {
         zoomLbl->setText(view_->image() ? QString::number(view_->zoomPercent(), 'f', view_->zoomPercent() < 10 ? 1 : 0) + "%" : QString());
     });
 
+    // file info: a single line under the preview; too long -> middle-drag or wheel scrolls it (Blender style)
     info_ = new QLabel;
-    info_->setWordWrap(true);
+    info_->setWordWrap(false);
+    info_->setTextFormat(Qt::RichText);
     info_->setTextInteractionFlags(Qt::TextSelectableByMouse);
-    info_->setAlignment(Qt::AlignTop | Qt::AlignHCenter);
-    info_->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Maximum);
-    l->addWidget(stack_, 1);
+    info_->setAlignment(Qt::AlignVCenter | Qt::AlignHCenter);
+    infoScroll_ = new QScrollArea;
+    infoScroll_->setWidget(info_);
+    infoScroll_->setWidgetResizable(false);
+    infoScroll_->setFrameShape(QFrame::NoFrame);
+    infoScroll_->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    infoScroll_->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    infoScroll_->setAlignment(Qt::AlignCenter);
+    infoScroll_->setFixedHeight(info_->fontMetrics().height() + 8);
+    infoScroll_->setToolTip(tr("Middle-drag or scroll to see the whole line"));
+    info_->installEventFilter(this);
+    infoScroll_->viewport()->installEventFilter(this);
+    l->addWidget(view_, 1);
     l->addWidget(tools_);
-    l->addWidget(info_);
+    l->addWidget(infoScroll_);
 }
 
 PreviewPane::~PreviewPane() { cancelLoad(); }
@@ -94,19 +101,35 @@ void PreviewPane::cancelLoad() {
 
 // keys work while the canvas has focus (click it first), so the browser keeps its own keys
 bool PreviewPane::eventFilter(QObject* o, QEvent* e) {
-    if (o == view_ && is3d_ && !live_ && (e->type() == QEvent::MouseButtonPress || e->type() == QEvent::Wheel)) {
-        goLive3D(e);
-        return true;
+    if (o == info_ || o == infoScroll_->viewport()) {
+        QScrollBar* sb = infoScroll_->horizontalScrollBar();
+        switch (e->type()) {
+        case QEvent::MouseButtonPress: {
+            auto* m = static_cast<QMouseEvent*>(e);
+            if (m->button() != Qt::MiddleButton) break;
+            dragX_ = (int)m->globalPosition().x(); dragStart_ = sb->value();
+            infoScroll_->viewport()->setCursor(Qt::ClosedHandCursor);
+            return true;
+        }
+        case QEvent::MouseMove:
+            if (dragX_ < 0) break;
+            sb->setValue(dragStart_ - ((int)static_cast<QMouseEvent*>(e)->globalPosition().x() - dragX_));
+            return true;
+        case QEvent::MouseButtonRelease:
+            if (dragX_ < 0 || static_cast<QMouseEvent*>(e)->button() != Qt::MiddleButton) break;
+            dragX_ = -1;
+            infoScroll_->viewport()->unsetCursor();
+            return true;
+        case QEvent::Wheel: {
+            auto* w = static_cast<QWheelEvent*>(e);
+            int d = w->angleDelta().y() ? w->angleDelta().y() : w->angleDelta().x();
+            sb->setValue(sb->value() - d / 2);
+            return true;
+        }
+        default: break;
+        }
+        return false;
     }
-#ifdef HBV_HAVE_F3D
-    if (o == view_ && live_ && model_ && (e->type() == QEvent::MouseMove || e->type() == QEvent::MouseButtonRelease)) {
-        auto* m = static_cast<QMouseEvent*>(e);       // drag that started on the still: keep it going
-        QMouseEvent ev(e->type(), model_->mapFromGlobal(m->globalPosition()), m->scenePosition(), m->globalPosition(),
-                       m->button(), m->buttons(), m->modifiers());
-        QApplication::sendEvent(model_, &ev);
-        return true;
-    }
-#endif
     if (o == view_ && e->type() == QEvent::KeyPress) {
         auto* k = static_cast<QKeyEvent*>(e);
         if (k->modifiers() & (Qt::ControlModifier | Qt::AltModifier | Qt::MetaModifier)) return false;
@@ -126,59 +149,20 @@ bool PreviewPane::eventFilter(QObject* o, QEvent* e) {
     return QWidget::eventFilter(o, e);
 }
 
-// The still render is cheap to browse through; the first click / wheel on it loads the model
-// into a real f3d view (same controls as the 3D viewer) and hands that event over.
-void PreviewPane::goLive3D(QEvent* forward) {
-#ifdef HBV_HAVE_F3D
-    if (!is3d_ || path3d_.isEmpty()) return;
-    if (!model_) {
-        model_ = new ModelView;
-        stack_->addWidget(model_);
-    }
-    live_ = true;
-    tools_->hide();
-    stack_->setCurrentWidget(model_);
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    model_->load(path3d_);
-    QApplication::restoreOverrideCursor();
-    model_->setFocus();
-    info_->setText(baseInfo_ + (model_->error().isEmpty()
-        ? QStringLiteral("<br>3D model - drag to orbit, right-drag/wheel to zoom, middle-drag to pan")
-        : "<br>" + model_->error().left(200).toHtmlEscaped()));
-    if (!forward) return;
-    if (forward->type() == QEvent::MouseButtonPress) {
-        auto* m = static_cast<QMouseEvent*>(forward);
-        QMouseEvent ev(QEvent::MouseButtonPress, m->position(), m->scenePosition(), m->globalPosition(),
-                       m->button(), m->buttons(), m->modifiers());
-        QApplication::sendEvent(model_, &ev);
-    } else if (forward->type() == QEvent::Wheel) {
-        auto* w = static_cast<QWheelEvent*>(forward);
-        QWheelEvent ev(w->position(), w->globalPosition(), w->pixelDelta(), w->angleDelta(), w->buttons(),
-                       w->modifiers(), w->phase(), w->inverted());
-        QApplication::sendEvent(model_, &ev);
-    }
-#else
-    (void)forward;
-#endif
-}
-
-void PreviewPane::leaveLive3D() {
-#ifdef HBV_HAVE_F3D
-    if (live_ && model_) model_->unload();          // frees the model's memory
-#endif
-    live_ = false;
-    stack_->setCurrentWidget(view_);
-    tools_->show();
+void PreviewPane::setInfo(const QString& html) {
+    QString t = html;
+    t.replace("<br>", QStringLiteral("&nbsp;&nbsp;\u00b7&nbsp;&nbsp;"));
+    info_->setText(t);
+    info_->adjustSize();
+    infoScroll_->horizontalScrollBar()->setValue(0);
 }
 
 void PreviewPane::clearItem() {
     ++gen_;
     cancelLoad();
-    leaveLive3D();
-    is3d_ = false;
     item_ = KFileItem();
     view_->clear();
-    info_->setText("<i>Nothing selected</i>");
+    setInfo("<i>Nothing selected</i>");
 }
 
 void PreviewPane::setPicture(const QImage& img) {
@@ -194,14 +178,12 @@ void PreviewPane::showItem(const KFileItem& it) {
     if (it.isNull()) { clearItem(); return; }
     int gen = ++gen_;
     cancelLoad();
-    leaveLive3D();
-    is3d_ = false;
     item_ = it;
     setPicture(QIcon::fromTheme(it.iconName()).pixmap(128, 128).toImage());
     baseInfo_ = "<b>" + it.text().toHtmlEscaped() + "</b><br>" + it.mimeComment().toHtmlEscaped() +
                 (it.isDir() ? QString() : "<br>" + humanSize((double)it.size())) +
                 "<br>" + it.time(KFileItem::ModificationTime).toString("yyyy-MM-dd HH:mm");
-    info_->setText(baseInfo_);
+    setInfo(baseInfo_);
     if (it.isDir()) return;
     QPointer<PreviewPane> self(this);
     std::string ext = lower_ext(it.name().toStdString());
@@ -219,7 +201,7 @@ void PreviewPane::showItem(const KFileItem& it) {
                         QString extra = QString("<br>%1 x %2").arg(r->info.orig_w).arg(r->info.orig_h);
                         if (!r->info.format.empty()) extra += "  " + QString::fromStdString(r->info.format);
                         if (!r->info.details.empty()) extra += "<br>" + QString::fromStdString(r->info.details).toHtmlEscaped();
-                        self->info_->setText(self->baseInfo_ + extra);
+                        self->setInfo(self->baseInfo_ + extra);
                     }
                     self->view_->setResult(r, r->animated ? qpath : QString(), upgrade);
                 }, Qt::QueuedConnection);
@@ -239,13 +221,11 @@ void PreviewPane::showItem(const KFileItem& it) {
     }
     if (it.isLocalFile() && is_3d_ext(ext) && Thumb3D::available()) {
         // 3D model: rendered by our own offscreen f3d engine on a worker thread
-        is3d_ = true;
-        path3d_ = it.localPath();
-        info_->setText(baseInfo_ + "<br><i>rendering 3D preview...</i>");
+        setInfo(baseInfo_ + "<br><i>rendering 3D preview...</i>");
         Thumb3D::request(it.localPath(), 1024, this, [this, gen](const QImage& img, const QString& err) {
-            if (gen != gen_ || live_) return;
+            if (gen != gen_) return;
             setPicture(img);
-            info_->setText(baseInfo_ + (err.isEmpty() ? QStringLiteral("<br>3D model - click or drag to orbit") : "<br>" + err.left(200).toHtmlEscaped()));
+            setInfo(baseInfo_ + (err.isEmpty() ? QStringLiteral("<br>3D model") : "<br>" + err.left(200).toHtmlEscaped()));
         });
         return;
     }

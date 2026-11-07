@@ -72,10 +72,11 @@ Reference app: "Imagine" (Windows freeware, user's zip) – used only as feature
 - Toolbar "view_mode" button (dropdown + click cycles): Details / Icons / Thumbnails / Cascade.
   Dolphin part actions used: "details", "icons", "show_preview" (names printed by --selftest to verify).
 
-## IN PROGRESS: orbitable 3D in the preview panel
-- PreviewPane: 3D still (Thumb3D) first; first press/wheel on it -> lazily created ModelView (own f3d engine) in a
-  QStackedWidget loads the model and receives the forwarded event (and the rest of the drag). Leaving the item unloads.
-- Self-test: HBV_SELFTEST_PREVIEW3D also goes live and orbits (frame must change), rc 11.
+## Preview panel fixes (user screenshot: blurry/cropped after resize; wants one-line info)
+- Orbitable 3D in the panel was added then REVERTED on user request (keep the still render).
+- ImageView::resizeEvent didn't call QOpenGLWidget::resizeEvent -> FBO kept old size, stretched. Fixed (main viewer too).
+- Texture cache keyed by an image generation counter instead of the Image pointer (address reuse).
+- Info = single line under the preview (parts joined by " · "), in a QScrollArea: middle-drag / wheel scroll.
 
 ## DONE (CI green, run 42398433194): preview panel = full ImageView (user: "all zooming and panning of the image viewer")
 - PreviewPane: QLabel -> ImageView (wheel zoom at cursor, drag pan, middle/0 fit, 1 = 100%, +/-, W, L/R, H/V when

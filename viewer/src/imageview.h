@@ -90,7 +90,7 @@ private:
     QOpenGLShaderProgram* prog_ = nullptr;
     struct Tex { unsigned id; size_t bytes; quint64 used; };
     std::unordered_map<quint64, Tex> tex_;          // key: level/col/row
-    const Image* texOwner_ = nullptr;               // image the cached textures belong to
+    quint64 imgGen_ = 1, texGen_ = 0;               // bumped per new image; textures belong to texGen_ (pointers can be reused)
     size_t texBytes_ = 0, texBudget_ = size_t(768) << 20;
     quint64 frameNo_ = 0;
 public:

@@ -167,32 +167,6 @@ int main(int argc, char** argv) {
                 printf("preview3d: done=%d size=%dx%d drawn=%ld err=%s -> %s\n", doneFlag, got.width(), got.height(), diff,
                        err.toLocal8Bit().constData(), diff > 100 ? "OK" : "FAIL");
                 if (diff <= 100) rc = 9;
-                // live, orbitable f3d view inside the right preview panel
-                PreviewPane* pp = w->sidePreview();
-                pp->setVisible(true);
-                pp->showItem(KFileItem(QUrl::fromLocalFile(QString::fromLocal8Bit(f))));
-                auto wait = [](int ms) { QEventLoop l; QTimer::singleShot(ms, &l, &QEventLoop::quit); l.exec(); };
-                wait(500);
-                pp->goLive3D();
-                wait(500);
-                ModelView* mv = pp->modelView();
-                QImage a = mv ? mv->frame() : QImage();
-                if (mv) {                                   // left-drag = orbit
-                    QPointF c(mv->width() / 2.0, mv->height() / 2.0);
-                    auto send = [&](QEvent::Type t, QPointF p, Qt::MouseButtons b) {
-                        QMouseEvent ev(t, p, mv->mapToGlobal(p), Qt::LeftButton, b, Qt::NoModifier);
-                        QApplication::sendEvent(mv, &ev);
-                    };
-                    send(QEvent::MouseButtonPress, c, Qt::LeftButton);
-                    for (int i = 1; i <= 10; i++) { send(QEvent::MouseMove, c + QPointF(i * 8, i * 3), Qt::LeftButton); wait(30); }
-                    send(QEvent::MouseButtonRelease, c + QPointF(80, 30), Qt::NoButton);
-                    wait(500);
-                }
-                QImage b = mv ? mv->frame() : QImage();
-                bool liveOk = pp->live3D() && !a.isNull() && !b.isNull() && a != b;
-                printf("preview3d live: frames %dx%d, changed by orbit=%d err=%s -> %s\n", a.width(), a.height(), (int)(a != b),
-                       mv ? mv->error().toLocal8Bit().constData() : "no view", liveOk ? "OK" : "FAIL");
-                if (!liveOk) rc = 11;
             }
             if (ModelView* m = w->modelView(); m && !m->path().isEmpty()) {
                 QImage fb = m->frame();

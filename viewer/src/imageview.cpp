@@ -24,6 +24,7 @@ ImageView::~ImageView() {
 void ImageView::clear() {
     if (movie_) { movie_->deleteLater(); movie_ = nullptr; }
     r_.reset();
+    ++imgGen_;
     path_.clear();
     pixel_.clear();
     update();
@@ -35,6 +36,7 @@ void ImageView::setResult(std::shared_ptr<LoadResult> r, const QString& path, bo
     double oldW = keepView && image() ? image()->width() : 0;
     if (movie_) { movie_->deleteLater(); movie_ = nullptr; }
     r_ = std::move(r);
+    ++imgGen_;
     path_ = path;
     message_.clear();
     if (keepView && oldW > 0 && image()) {
@@ -57,7 +59,7 @@ void ImageView::startMovie() {
     if (!movie_->isValid() || movie_->frameCount() == 1) { delete movie_; movie_ = nullptr; return; }
     connect(movie_, &QMovie::frameChanged, this, [this](int) {
         if (!r_ || !movie_) return;
-        if (auto im = image_from_qimage(movie_->currentImage())) { im->build_mips(); r_->img = std::move(im); }
+        if (auto im = image_from_qimage(movie_->currentImage())) { im->build_mips(); r_->img = std::move(im); ++imgGen_; }
         update();
     });
     movie_->start();
@@ -260,7 +262,7 @@ void ImageView::paintGL() {
     QColor bgc = bg == BgGray ? QColor(128, 128, 128) : bg == BgWhite ? QColor(Qt::white) : QColor(28, 28, 31);
     glClearColor(bgc.redF(), bgc.greenF(), bgc.blueF(), 1);
     glClear(GL_COLOR_BUFFER_BIT);
-    if (image() != texOwner_) { dropTextures(); texOwner_ = image(); }   // new image / animation frame
+    if (texGen_ != imgGen_) { dropTextures(); texGen_ = imgGen_; }       // new image / animation frame
 
     static const GLfloat quad[] = {0, 0, 1, 0, 0, 1, 1, 1};
     prog_->bind();
@@ -294,7 +296,10 @@ void ImageView::paintGL() {
     }
 }
 
-void ImageView::resizeEvent(QResizeEvent*) { if (autoFit_ && image()) fit(zoom_ > 1.0001); }
+void ImageView::resizeEvent(QResizeEvent* e) {
+    QOpenGLWidget::resizeEvent(e);                  // resizes the framebuffer (else the old one gets stretched)
+    if (autoFit_ && image()) fit(zoom_ > 1.0001);
+}
 
 // ---------------------------------------------------------------- input
 void ImageView::mousePressEvent(QMouseEvent* e) {
